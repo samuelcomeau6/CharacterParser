@@ -934,7 +934,7 @@ _ATTACK_TABLE_RIGHT = MARGIN + _ATTACK_TABLE_W
 # The header/row separator lines stop a bit short of the table's own right
 # edge (rather than at _ATTACK_TABLE_RIGHT) so they don't visually run
 # into Traits & Feats, which starts immediately to the right of it.
-_ATTACK_LINE_RIGHT = _ATTACK_TABLE_RIGHT - 5 * _ATTACK_CHAR_W
+_ATTACK_LINE_RIGHT = _ATTACK_TABLE_RIGHT - 2 * _ATTACK_CHAR_W
 
 
 def _build_attacks(b: SheetBuilder, c: Character) -> None:
