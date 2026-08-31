@@ -1356,6 +1356,20 @@ _PARTIAL_SHORT_RECHARGE_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# A feature's own name sometimes doesn't match the name D&D Beyond gives its
+# resolved, countable resource -- e.g. the Battle Master's "Combat
+# Superiority" feature is tracked as an action called "Superiority Dice".
+_FEATURE_ACTION_ALIASES = {
+    "combat superiority": "Superiority Dice",
+}
+
+# Some limited-use features (the 2024 Lucky feat's Luck Points, for one)
+# have no limitedUse block or resolved action at all -- the count is only
+# ever stated in the feature's own rules text.
+_PROFICIENCY_USES_RE = re.compile(r"equal to your proficiency bonus", re.IGNORECASE)
+_SHORT_REST_RE = re.compile(r"short rest", re.IGNORECASE)
+_LONG_REST_RE = re.compile(r"long rest", re.IGNORECASE)
+
 
 def _flat_actions(data: dict) -> List[dict]:
     """Every resolved action entry (race/class/background/item/feat) the
@@ -1382,6 +1396,11 @@ def _find_action(name: str, actions: List[dict]) -> Optional[dict]:
         aname = a.get("name") or ""
         if any(aname.startswith(p) for p in prefixes):
             return a
+    alias = _FEATURE_ACTION_ALIASES.get(name.lower())
+    if alias:
+        for a in actions:
+            if a.get("name") == alias:
+                return a
     return None
 
 
@@ -1390,22 +1409,30 @@ def _feat_usage(name: str, description: Optional[str], actions: List[dict],
     """(max_uses, rest_type) for a feat/feature/trait, or (None, None) if it
     has no tracked usage limit."""
     action = _find_action(name, actions)
-    if not action:
-        return None, None
-    lu = action.get("limitedUse") or {}
-    max_uses = lu.get("maxUses") or 0
-    if lu.get("useProficiencyBonus") and max_uses <= 0:
-        max_uses = prof
-    if max_uses <= 0:
-        return None, None
+    if action:
+        lu = action.get("limitedUse") or {}
+        max_uses = lu.get("maxUses") or 0
+        if lu.get("useProficiencyBonus") and max_uses <= 0:
+            max_uses = prof
+        if max_uses > 0:
+            reset_type = lu.get("resetType")
+            if reset_type == _RESET_SHORT_REST:
+                return max_uses, "short"
+            if reset_type == _RESET_LONG_REST:
+                if _PARTIAL_SHORT_RECHARGE_RE.search(description or ""):
+                    return max_uses, "long_plus_short"
+                return max_uses, "long"
 
-    reset_type = lu.get("resetType")
-    if reset_type == _RESET_SHORT_REST:
-        return max_uses, "short"
-    if reset_type == _RESET_LONG_REST:
-        if _PARTIAL_SHORT_RECHARGE_RE.search(description or ""):
-            return max_uses, "long_plus_short"
-        return max_uses, "long"
+    # No resolved action carries a usable limitedUse (e.g. the Lucky feat
+    # has neither) -- fall back to what the feature's own rules text says.
+    text = description or ""
+    if _PROFICIENCY_USES_RE.search(text):
+        if _PARTIAL_SHORT_RECHARGE_RE.search(text):
+            return prof, "long_plus_short"
+        if _SHORT_REST_RE.search(text) and not _LONG_REST_RE.search(text):
+            return prof, "short"
+        return prof, "long"
+
     return None, None
 
 
