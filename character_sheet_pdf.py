@@ -676,7 +676,8 @@ def _build_ability_columns(b: SheetBuilder, c: Character) -> None:
         b.cv.text_centered(x + col_w / 2, y + 33, str(ab.score), font="F1", size=9, gray=0.35)
         y += score_box_h + 6.0
 
-        b.cv.text(x, y + 10, f"Save {fmt(ab.save)}", font="F2", size=9.5)
+        save_text = f"Save {fmt(ab.save)}" + (" (A)" if ab.save_advantage else "")
+        b.cv.text(x, y + 10, save_text, font="F2", size=9.5)
         if ab.save_proficient:
             b.cv.text_right(x + col_w, y + 10, "(P)", font="F2", size=9.5)
         y += save_row_h

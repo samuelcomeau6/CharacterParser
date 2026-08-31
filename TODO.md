@@ -3,3 +3,4 @@
 - Character level should be before class levels
 - Add filter files that can be customized per character
 - Add a CLI prompt to generate filter files.
+- Add a DM export character utility. It takes campaign file the consists of character URLs on their own line. It exports a pdf file for each character, and a DM page, and a single file consisting of the DM page and all the character sheets. The DM page should list all of the characters AC, passive scores and their magical items.
