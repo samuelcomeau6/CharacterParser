@@ -48,7 +48,7 @@ __all__ = ["render_pdf"]
 # --------------------------------------------------------------------------
 
 PAGE_W, PAGE_H = 612.0, 792.0  # US Letter, points
-MARGIN = 36.0
+MARGIN = 18.0  # 0.25 in
 CONTENT_W = PAGE_W - 2 * MARGIN
 BOTTOM = PAGE_H - MARGIN
 
