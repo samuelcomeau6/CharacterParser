@@ -862,23 +862,45 @@ def _cantrip_damage(s, char_level: int) -> str:
     return f"{dice} {s.damage_type}".strip() if s.damage_type else dice
 
 
+# Column layout for Attacks and Cantrips, sized in characters (of the F1
+# body text at the row size below) rather than bare points, so the table
+# stays compact instead of stretching to the full page width. NAME and
+# ATK BONUS are hard caps (content is truncated to fit); DAMAGE/TYPE and
+# NOTES are the old fixed-point widths nudged by +/-10 characters.
+_ATTACK_ROW_SIZE = 8.5
+_ATTACK_CHAR_W = text_width("0", "F1", _ATTACK_ROW_SIZE)
+_ATTACK_NAME_MAXCHARS = 35
+_ATTACK_ATKB_MAXCHARS = 6
+_ATTACK_NOTES_MAXCHARS = 50
+_ATTACK_NAME_W = _ATTACK_NAME_MAXCHARS * _ATTACK_CHAR_W
+_ATTACK_ATKB_W = _ATTACK_ATKB_MAXCHARS * _ATTACK_CHAR_W
+_ATTACK_DAMAGE_W = 130 - 10 * _ATTACK_CHAR_W
+_ATTACK_NOTES_W = 140 + 10 * _ATTACK_CHAR_W
+_ATTACK_COL_NAME = MARGIN
+_ATTACK_COL_ATKB = _ATTACK_COL_NAME + _ATTACK_NAME_W
+_ATTACK_COL_DMG = _ATTACK_COL_ATKB + _ATTACK_ATKB_W
+_ATTACK_COL_NOTES = _ATTACK_COL_DMG + _ATTACK_DAMAGE_W
+_ATTACK_TABLE_RIGHT = _ATTACK_COL_NOTES + _ATTACK_NOTES_W
+
+
 def _build_attacks(b: SheetBuilder, c: Character) -> None:
     b.section("Attacks and Cantrips")
     b.ensure(13)
-    cols = [(MARGIN, "NAME"), (MARGIN + 200, "ATK BONUS"), (MARGIN + 270, "DAMAGE / TYPE"),
-            (MARGIN + 400, "NOTES")]
+    cols = [(_ATTACK_COL_NAME, "NAME"), (_ATTACK_COL_ATKB, "ATK BONUS"),
+            (_ATTACK_COL_DMG, "DAMAGE / TYPE"), (_ATTACK_COL_NOTES, "NOTES")]
     for x, label in cols:
         b.cv.text(x, b.y + 8, label, font="F2", size=7.5, gray=0.4)
     b.y += 11
-    b.cv.hline(MARGIN, b.y, PAGE_W - MARGIN, gray=0.6)
+    b.cv.hline(MARGIN, b.y, _ATTACK_TABLE_RIGHT, gray=0.6)
     b.y += 4
 
     for a in c.attacks:
         b.ensure(13)
-        b.cv.text(MARGIN, b.y + 9, a.name, font="F1", size=8.5)
-        b.cv.text(MARGIN + 200, b.y + 9, fmt(a.attack_bonus), font="F1", size=8.5)
+        b.cv.text(_ATTACK_COL_NAME, b.y + 9, a.name[:_ATTACK_NAME_MAXCHARS], font="F1", size=8.5)
+        b.cv.text(_ATTACK_COL_ATKB, b.y + 9, fmt(a.attack_bonus)[:_ATTACK_ATKB_MAXCHARS],
+                  font="F1", size=8.5)
         dmg = f"{a.damage} {a.damage_type or ''}".strip()
-        b.cv.text(MARGIN + 270, b.y + 9, dmg, font="F1", size=8.5)
+        b.cv.text(_ATTACK_COL_DMG, b.y + 9, dmg, font="F1", size=8.5)
         # The weapon's own formal properties (Light, Heavy, Thrown, ...)
         # already include any known mastery (e.g. Cleave, Vex) -- no need
         # to separately spell out which ability it uses, but the range/reach
@@ -887,8 +909,9 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
         if a.range:
             notes_parts.append(a.range)
         props_text = ", ".join(notes_parts)
-        b.cv.text(MARGIN + 400, b.y + 9, props_text[:40], font="F1", size=7.5, gray=0.4)
-        b.cv.hline(MARGIN, b.y + 11, PAGE_W - MARGIN, gray=0.85)
+        b.cv.text(_ATTACK_COL_NOTES, b.y + 9, props_text[:_ATTACK_NOTES_MAXCHARS],
+                  font="F1", size=7.5, gray=0.4)
+        b.cv.hline(MARGIN, b.y + 11, _ATTACK_TABLE_RIGHT, gray=0.85)
         b.y += 13
 
     # Every known cantrip counts as an at-will "attack" at the table, so it
@@ -904,7 +927,7 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
             dc = 8 + c.proficiency_bonus + ab.modifier
         for s in cantrips:
             b.ensure(13)
-            b.cv.text(MARGIN, b.y + 9, s.name, font="F1", size=8.5)
+            b.cv.text(_ATTACK_COL_NAME, b.y + 9, s.name[:_ATTACK_NAME_MAXCHARS], font="F1", size=8.5)
 
             # This slot holds an attack bonus for attack-roll cantrips, or
             # the save DC and the ability the target rolls for save-based
@@ -916,17 +939,19 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
                 check_text = atk_bonus_text
             else:
                 check_text = "—"
-            b.cv.text(MARGIN + 200, b.y + 9, check_text, font="F1", size=8.5)
+            b.cv.text(_ATTACK_COL_ATKB, b.y + 9, check_text[:_ATTACK_ATKB_MAXCHARS],
+                      font="F1", size=8.5)
 
-            b.cv.text(MARGIN + 270, b.y + 9, _cantrip_damage(s, c.level), font="F1", size=8.5)
-            b.cv.text(MARGIN + 400, b.y + 9, s.range_text or "", font="F1", size=7.5, gray=0.4)
-            b.cv.hline(MARGIN, b.y + 11, PAGE_W - MARGIN, gray=0.85)
+            b.cv.text(_ATTACK_COL_DMG, b.y + 9, _cantrip_damage(s, c.level), font="F1", size=8.5)
+            b.cv.text(_ATTACK_COL_NOTES, b.y + 9, (s.range_text or "")[:_ATTACK_NOTES_MAXCHARS],
+                      font="F1", size=7.5, gray=0.4)
+            b.cv.hline(MARGIN, b.y + 11, _ATTACK_TABLE_RIGHT, gray=0.85)
             b.y += 13
 
     # Room to pencil in additional attacks.
     for _ in range(3):
         b.ensure(13)
-        b.cv.hline(MARGIN, b.y + 11, PAGE_W - MARGIN, gray=0.55)
+        b.cv.hline(MARGIN, b.y + 11, _ATTACK_TABLE_RIGHT, gray=0.55)
         b.y += 13
     b.gap(4)
 
