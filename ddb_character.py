@@ -488,6 +488,7 @@ def parse_character(data: dict) -> Character:
     total_level = sum(c.level for c in classes) or 1
     prof = 1 + math.ceil(total_level / 4)
     actions = _flat_actions(data)
+    weapon_masteries = _parse_weapon_masteries(mods, actions)
 
     abilities = _parse_abilities(data, mods, prof)
     skills = _parse_skills(abilities, mods, prof)
@@ -533,12 +534,12 @@ def parse_character(data: dict) -> Character:
         weapon_proficiencies=_proficiency_group(data, mods, "weapon"),
         tool_proficiencies=_proficiency_group(data, mods, "tool"),
         languages=sorted({titleize(s) for s in _subtypes(mods, "language")}),
-        attacks=_parse_attacks(data, abilities, mods, prof),
+        attacks=_parse_attacks(data, abilities, mods, prof, weapon_masteries),
         inventory=_parse_inventory(data),
         spells=_parse_spells(data),
         spell_slots=_parse_slots(data.get("spellSlots")) or _compute_spell_slots(classes),
         pact_slots=_parse_pact(data.get("pactMagic")) or _compute_pact_slots(classes),
-        feats=_parse_feats(data, actions, prof),
+        feats=_parse_feats(data, actions, prof) + _mastery_feats(weapon_masteries),
         class_features=_parse_class_features(data, actions, prof),
         species_traits=_parse_species_traits(data, actions, prof),
         conditions=[(c.get("definition") or {}).get("name") or f"condition {c.get('id')}"
@@ -758,8 +759,11 @@ _RANGED_TYPES = {2}  # attackType 1 = melee, 2 = ranged
 WEAPON_CATEGORY = {1: "simple-weapons", 2: "martial-weapons"}
 
 
-def _parse_attacks(data: dict, abilities, mods, prof: int) -> List[Attack]:
+def _parse_attacks(data: dict, abilities, mods, prof: int,
+                    weapon_masteries: Optional[Dict[str, Tuple[str, Optional[str]]]] = None
+                    ) -> List[Attack]:
     weapon_profs = {s.lower() for s in _subtypes(mods, "proficiency")}
+    weapon_masteries = weapon_masteries or {}
     attacks: List[Attack] = []
 
     for item in data.get("inventory") or []:
@@ -801,6 +805,11 @@ def _parse_attacks(data: dict, abilities, mods, prof: int) -> List[Attack]:
             else:
                 rng = f"{d['range']} ft. reach"
 
+        notes = f"uses {ABBREV[ability]}"
+        mastery = weapon_masteries.get((d.get("name") or "").lower())
+        if mastery:
+            notes += f", {mastery[0]}"
+
         attacks.append(Attack(
             name=d.get("name") or "Weapon",
             attack_bonus=ab_mod + magic_bonus + (prof if proficient else 0),
@@ -809,7 +818,7 @@ def _parse_attacks(data: dict, abilities, mods, prof: int) -> List[Attack]:
             range=rng,
             properties=props,
             proficient=proficient,
-            notes=f"uses {ABBREV[ability]}",
+            notes=notes,
         ))
 
     attacks.sort(key=lambda a: a.name)
@@ -1172,6 +1181,51 @@ def _compute_pact_slots(classes) -> Dict[str, int]:
 # "feats" list on this character but shouldn't show up as such.
 _IGNORED_FEATS = {"Dark Bargain", "Character Threads", "Runestones"}
 
+# "Weapon Mastery" (and its releveled repeats, e.g. "4: Weapon Mastery") is
+# just the class feature that grants the ability to pick masteries at all --
+# it's a placeholder, not something to look up during play. The *specific*
+# masteries the character actually knows are synthesized separately, below.
+_GENERIC_WEAPON_MASTERY_RE = re.compile(r"^(?:\d+:\s*)?weapon mastery$", re.IGNORECASE)
+
+
+def _is_generic_weapon_mastery(name: str) -> bool:
+    return bool(_GENERIC_WEAPON_MASTERY_RE.match(name))
+
+
+# D&D Beyond's weapon-mastery modifiers carry a friendlySubtypeName like
+# "Cleave (Greataxe)" or "Vex (Handaxe, Silver)" -- pull out the property and
+# the base weapon name.
+_MASTERY_LABEL_RE = re.compile(r"^([A-Za-z][\w\s]*?)\s*\(([^,)]+)(?:,[^)]*)?\)$")
+
+
+def _parse_weapon_masteries(mods, actions: List[dict]) -> Dict[str, Tuple[str, Optional[str]]]:
+    """weapon base name (lowercase) -> (mastery property name, its formal
+    rules text). The rules text is the character's own resolved action for
+    that property/weapon pair (e.g. name "Graze (Greatsword)"), the same
+    text D&D Beyond itself shows -- not a paraphrase. A character with both
+    a plain and a silvered copy of the same weapon gets two modifiers for
+    the same mastery; this collapses them to one entry per weapon."""
+    out: Dict[str, Tuple[str, Optional[str]]] = {}
+    for _, m in mods:
+        if m.get("type") != "weapon-mastery":
+            continue
+        match = _MASTERY_LABEL_RE.match(m.get("friendlySubtypeName") or "")
+        if not match:
+            continue
+        prop, weapon = match.group(1).strip(), match.group(2).strip()
+        action = _find_action(f"{prop} ({weapon})", actions)
+        out[weapon.lower()] = (prop, action.get("description") if action else None)
+    return out
+
+
+def _mastery_feats(masteries: Dict[str, Tuple[str, Optional[str]]]) -> List[Feat]:
+    """One Feat per known weapon mastery, so it shows up alongside real
+    feats in both the summary and the full list."""
+    out = []
+    for weapon, (prop, desc) in sorted(masteries.items(), key=lambda kv: (kv[1][0], kv[0])):
+        out.append(Feat(name=f"{prop} ({weapon.title()})", description=desc))
+    return out
+
 # D&D Beyond's `limitedUse.resetType` values, as observed on real characters.
 _RESET_SHORT_REST = 1
 _RESET_LONG_REST = 2
@@ -1186,15 +1240,15 @@ _PARTIAL_SHORT_RECHARGE_RE = re.compile(
 
 
 def _flat_actions(data: dict) -> List[dict]:
-    """Every action entry (race/class/background/item/feat) that carries a
-    resolved `limitedUse` block -- the current-level use counts and reset
-    rule, as opposed to the per-level scaling table on the feature itself.
+    """Every resolved action entry (race/class/background/item/feat) the
+    character has -- covers both usage-limited features (a `limitedUse`
+    block with the current-level use count and reset rule) and plain
+    reference actions with no usage limit, like a known weapon-mastery
+    property's formal rules text.
     """
     out = []
     for entries in (data.get("actions") or {}).values():
-        for e in entries or []:
-            if e.get("limitedUse"):
-                out.append(e)
+        out.extend(entries or [])
     return out
 
 
@@ -1242,7 +1296,7 @@ def _parse_feats(data: dict, actions: List[dict], prof: int) -> List[Feat]:
     for f in data.get("feats") or []:
         d = f.get("definition") or {}
         name = d.get("name")
-        if not name or name in _IGNORED_FEATS:
+        if not name or name in _IGNORED_FEATS or _is_generic_weapon_mastery(name):
             continue
         description = d.get("description") or d.get("snippet")
         max_uses, rest_type = _feat_usage(name, description, actions, prof)
@@ -1265,7 +1319,7 @@ def _parse_class_features(data: dict, actions: List[dict], prof: int) -> List[Fe
             d = f.get("definition") or {}
             name = d.get("name")
             required = d.get("requiredLevel") or 1
-            if not name or required > level or name in seen:
+            if not name or required > level or name in seen or _is_generic_weapon_mastery(name):
                 continue
             seen.add(name)
             description = d.get("description") or d.get("snippet")
@@ -1281,7 +1335,7 @@ def _parse_species_traits(data: dict, actions: List[dict], prof: int) -> List[Fe
     for t in (data.get("race") or {}).get("racialTraits") or []:
         d = t.get("definition") or {}
         name = d.get("name")
-        if not name or name in seen:
+        if not name or name in seen or _is_generic_weapon_mastery(name):
             continue
         seen.add(name)
         description = d.get("description") or d.get("snippet")

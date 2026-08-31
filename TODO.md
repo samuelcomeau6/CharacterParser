@@ -1,5 +1,3 @@
-- Weapon mastery should be displayed in the notes section of the attack if the character has mastery for that weapon.
-- Known weapon mastery abilities should be listed in the feat summary and the feat list.
 - Other proficiencies and languages should be located near the end of the character sheet, above Features and traits
 - There needs to be a magical items section that lists all items that have magical properties and shows attunement slots. Magical items that have charges should have checkboxes.
 - There needs to be a section that give the description of any magical items.
@@ -8,3 +6,7 @@
 - The inventory should have its own dedicated page.
 - Creature size should be listed somewhere.
 - Animal Handling is weirdly abbreviated.
+- Create feat summary filter list and feature/trait filter list
+- Add filter list command line arguement
+- Add no feat/trait list command line arguement
+- Add no spell list command line arguement

@@ -813,10 +813,11 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
         b.cv.text(MARGIN + 200, b.y + 9, fmt(a.attack_bonus), font="F1", size=8.5)
         dmg = f"{a.damage} {a.damage_type or ''}".strip()
         b.cv.text(MARGIN + 270, b.y + 9, dmg, font="F1", size=8.5)
-        notes = a.notes
-        if a.range:
-            notes = f"{notes}, {a.range}" if notes else a.range
-        b.cv.text(MARGIN + 400, b.y + 9, notes[:28], font="F1", size=7.5, gray=0.4)
+        # The weapon's own formal properties (Light, Heavy, Thrown, ...)
+        # already include any known mastery (e.g. Cleave, Vex) -- no need
+        # to separately spell out which ability it uses or its range/reach.
+        props_text = ", ".join(a.properties)
+        b.cv.text(MARGIN + 400, b.y + 9, props_text[:40], font="F1", size=7.5, gray=0.4)
         b.y += 13
 
     # Every known cantrip counts as an at-will "attack" at the table, so it
@@ -1052,9 +1053,9 @@ def _build_feat_list(b: SheetBuilder, feats: List) -> None:
 def _build_features(b: SheetBuilder, c: Character) -> None:
     b.section("Features & Traits")
     groups = [
-        ("Species Traits", c.species_traits),
-        ("Class Features", c.class_features),
         ("Feats", c.feats),
+        ("Class Features", c.class_features),
+        ("Species Traits", c.species_traits),
     ]
     if not any(items for _, items in groups):
         b.line("(none recorded)", size=8, gray=0.4)
