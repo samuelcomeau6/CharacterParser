@@ -1177,19 +1177,65 @@ def _compute_pact_slots(classes) -> Dict[str, int]:
     return {}
 
 
-# Not actual feats -- homebrew/optional entries that ride along in the same
-# "feats" list on this character but shouldn't show up as such.
-_IGNORED_FEATS = {"Dark Bargain", "Character Threads", "Runestones"}
+# --------------------------------------------------------------------------
+# Feat/feature/trait filtering rules
+#
+# Three independent lists, each a (names, name-patterns) pair matched
+# case-insensitively against a feat/class-feature/species-trait's name:
+#
+#   FILTER_LIST        -- dropped everywhere: not a real feat/feature (a
+#                          homebrew/UI entry that rides along in the same
+#                          list), or a pure placeholder with nothing to look
+#                          up during play (e.g. the generic "Weapon Mastery"
+#                          feature -- the specific masteries it grants are
+#                          synthesized as their own feats instead).
+#   FILTER_SUMMARY      -- dropped from the compact Traits & Feats summary
+#                          only; still shown with its full description in
+#                          the Features & Traits list. For passive
+#                          descriptors that are either already shown
+#                          elsewhere on the sheet or aren't actionable at
+#                          the table.
+#   FILTER_DESCRIPTION  -- shown by name in the Features & Traits list (and
+#                          the summary), but its description text is
+#                          suppressed. For placeholder/administrative
+#                          entries that are worth listing but whose
+#                          "description" is pure boilerplate.
+#
+# All three are plain module data, not functions, so they're easy to
+# inspect or override (e.g. from a future --filter-list CLI flag).
+# --------------------------------------------------------------------------
 
-# "Weapon Mastery" (and its releveled repeats, e.g. "4: Weapon Mastery") is
-# just the class feature that grants the ability to pick masteries at all --
-# it's a placeholder, not something to look up during play. The *specific*
-# masteries the character actually knows are synthesized separately, below.
-_GENERIC_WEAPON_MASTERY_RE = re.compile(r"^(?:\d+:\s*)?weapon mastery$", re.IGNORECASE)
+FILTER_LIST = {"Dark Bargain", "Character Threads", "Runestones"}
+FILTER_LIST_PATTERNS = [re.compile(r"^(?:\d+:\s*)?weapon mastery$", re.IGNORECASE)]
+
+FILTER_SUMMARY = {"Languages", "Ability Score Increases", "Speed", "Size", "Creature Type"}
+FILTER_SUMMARY_PATTERNS = [re.compile(r"^core .+ traits$", re.IGNORECASE)]
+
+FILTER_DESCRIPTION = {"Languages", "Standard Languages"}
+FILTER_DESCRIPTION_PATTERNS = [
+    re.compile(r"^.+ subclass$", re.IGNORECASE),                    # "Barbarian Subclass"
+    re.compile(r"^(?:\d+:\s*)?ability score improvement$", re.IGNORECASE),  # "8: Ability Score Improvement"
+    re.compile(r"^core .+ traits$", re.IGNORECASE),                 # "Core Barbarian Traits"
+    re.compile(r"^.+ ability score improvements$", re.IGNORECASE),  # "Soldier Ability Score Improvements"
+]
 
 
-def _is_generic_weapon_mastery(name: str) -> bool:
-    return bool(_GENERIC_WEAPON_MASTERY_RE.match(name))
+def _name_matches(name: str, names: set, patterns: List[re.Pattern]) -> bool:
+    if name.lower() in {n.lower() for n in names}:
+        return True
+    return any(p.match(name) for p in patterns)
+
+
+def in_filter_list(name: str) -> bool:
+    return _name_matches(name, FILTER_LIST, FILTER_LIST_PATTERNS)
+
+
+def in_filter_summary(name: str) -> bool:
+    return _name_matches(name, FILTER_SUMMARY, FILTER_SUMMARY_PATTERNS)
+
+
+def in_filter_description(name: str) -> bool:
+    return _name_matches(name, FILTER_DESCRIPTION, FILTER_DESCRIPTION_PATTERNS)
 
 
 # D&D Beyond's weapon-mastery modifiers carry a friendlySubtypeName like
@@ -1296,7 +1342,7 @@ def _parse_feats(data: dict, actions: List[dict], prof: int) -> List[Feat]:
     for f in data.get("feats") or []:
         d = f.get("definition") or {}
         name = d.get("name")
-        if not name or name in _IGNORED_FEATS or _is_generic_weapon_mastery(name):
+        if not name or in_filter_list(name):
             continue
         description = d.get("description") or d.get("snippet")
         max_uses, rest_type = _feat_usage(name, description, actions, prof)
@@ -1319,7 +1365,7 @@ def _parse_class_features(data: dict, actions: List[dict], prof: int) -> List[Fe
             d = f.get("definition") or {}
             name = d.get("name")
             required = d.get("requiredLevel") or 1
-            if not name or required > level or name in seen or _is_generic_weapon_mastery(name):
+            if not name or required > level or name in seen or in_filter_list(name):
                 continue
             seen.add(name)
             description = d.get("description") or d.get("snippet")
@@ -1335,7 +1381,7 @@ def _parse_species_traits(data: dict, actions: List[dict], prof: int) -> List[Fe
     for t in (data.get("race") or {}).get("racialTraits") or []:
         d = t.get("definition") or {}
         name = d.get("name")
-        if not name or name in seen or _is_generic_weapon_mastery(name):
+        if not name or name in seen or in_filter_list(name):
             continue
         seen.add(name)
         description = d.get("description") or d.get("snippet")
@@ -1460,6 +1506,117 @@ def load_character(source: str, *, cobalt_session: Optional[str] = None) -> Char
     return parse_character(fetch_character_json(source, cobalt_session=cobalt_session))
 
 
+def _parse_names_csv(s: str) -> set:
+    """A single, POSIX-friendly option-argument: one comma-separated list
+    (never space-separated -- feat/trait names routinely contain spaces,
+    e.g. "Ability Score Improvement")."""
+    return {n.strip() for n in s.split(",") if n.strip()}
+
+
+def _add_filter_option(ap: argparse.ArgumentParser, flag: str, label: str) -> None:
+    """Add a REPLACE/ADD pair of mutually exclusive options for one filter
+    list, each taking exactly one required option-argument (no optional
+    option-arguments, per the POSIX Utility Syntax Guidelines)."""
+    group = ap.add_mutually_exclusive_group()
+    group.add_argument(f"--{flag}", metavar="NAMES",
+                        help=f"replace the default {label} names with this comma-separated list")
+    group.add_argument(f"--{flag}-add", metavar="NAMES",
+                        help=f"add this comma-separated list to the default {label} names")
+
+
+def _compile_pattern(s: str) -> re.Pattern:
+    """argparse `type=` for a pattern option: validated eagerly so a bad
+    regex is reported as a normal usage error, not a traceback."""
+    try:
+        return re.compile(s, re.IGNORECASE)
+    except re.error as exc:
+        raise argparse.ArgumentTypeError(f"invalid regular expression {s!r}: {exc}")
+
+
+def _add_pattern_option(ap: argparse.ArgumentParser, flag: str, label: str) -> None:
+    """Add a REPLACE/ADD pair of mutually exclusive options for one filter's
+    *patterns*. Unlike the plain-name lists, a pattern can itself contain a
+    comma (e.g. a `{1,3}` quantifier), so comma-joining several into one
+    option-argument would be ambiguous -- each option-argument is exactly
+    one full regex, and the option may be repeated for more than one."""
+    group = ap.add_mutually_exclusive_group()
+    group.add_argument(f"--{flag}-pattern", metavar="REGEX", action="append",
+                        type=_compile_pattern,
+                        help=f"replace the default {label} patterns with this regex "
+                             f"(repeat the option for more than one)")
+    group.add_argument(f"--{flag}-pattern-add", metavar="REGEX", action="append",
+                        type=_compile_pattern,
+                        help=f"add this regex to the default {label} patterns "
+                             f"(repeat the option for more than one)")
+
+
+def _apply_filter_args(args: argparse.Namespace) -> None:
+    """Apply --filter-list/-summary/-description (names and patterns, and
+    their -add variants) by replacing or extending the corresponding
+    module-level set/list, which every subsequent parse_character() call
+    reads from."""
+    global FILTER_LIST, FILTER_SUMMARY, FILTER_DESCRIPTION
+    global FILTER_LIST_PATTERNS, FILTER_SUMMARY_PATTERNS, FILTER_DESCRIPTION_PATTERNS
+
+    if args.filter_list is not None:
+        FILTER_LIST = _parse_names_csv(args.filter_list)
+    elif args.filter_list_add is not None:
+        FILTER_LIST = FILTER_LIST | _parse_names_csv(args.filter_list_add)
+
+    if args.filter_summary is not None:
+        FILTER_SUMMARY = _parse_names_csv(args.filter_summary)
+    elif args.filter_summary_add is not None:
+        FILTER_SUMMARY = FILTER_SUMMARY | _parse_names_csv(args.filter_summary_add)
+
+    if args.filter_description is not None:
+        FILTER_DESCRIPTION = _parse_names_csv(args.filter_description)
+    elif args.filter_description_add is not None:
+        FILTER_DESCRIPTION = FILTER_DESCRIPTION | _parse_names_csv(args.filter_description_add)
+
+    if args.filter_list_pattern is not None:
+        FILTER_LIST_PATTERNS = args.filter_list_pattern
+    elif args.filter_list_pattern_add is not None:
+        FILTER_LIST_PATTERNS = FILTER_LIST_PATTERNS + args.filter_list_pattern_add
+
+    if args.filter_summary_pattern is not None:
+        FILTER_SUMMARY_PATTERNS = args.filter_summary_pattern
+    elif args.filter_summary_pattern_add is not None:
+        FILTER_SUMMARY_PATTERNS = FILTER_SUMMARY_PATTERNS + args.filter_summary_pattern_add
+
+    if args.filter_description_pattern is not None:
+        FILTER_DESCRIPTION_PATTERNS = args.filter_description_pattern
+    elif args.filter_description_pattern_add is not None:
+        FILTER_DESCRIPTION_PATTERNS = FILTER_DESCRIPTION_PATTERNS + args.filter_description_pattern_add
+
+    _sync_filters_to_library_module()
+
+
+_FILTER_GLOBAL_NAMES = (
+    "FILTER_LIST", "FILTER_SUMMARY", "FILTER_DESCRIPTION",
+    "FILTER_LIST_PATTERNS", "FILTER_SUMMARY_PATTERNS", "FILTER_DESCRIPTION_PATTERNS",
+)
+
+
+def _sync_filters_to_library_module() -> None:
+    """Push the current filter globals onto this file as imported *by name*.
+
+    Running `python ddb_character.py ...` loads this file as module
+    "__main__" -- a separate module object, with its own copy of every
+    global, from the one anything that does `import ddb_character`
+    (character_sheet_pdf.py, for the PDF renderer) sees. Without this, a
+    CLI filter override would apply to parsing (done directly by this same
+    "__main__" instance) but not to rendering (done via the other
+    instance's in_filter_summary/in_filter_description), or vice versa.
+    A no-op when this module wasn't run as a script.
+    """
+    import importlib
+    lib = sys.modules.get("ddb_character") or importlib.import_module("ddb_character")
+    if lib is sys.modules[__name__]:
+        return
+    for name in _FILTER_GLOBAL_NAMES:
+        setattr(lib, name, globals()[name])
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         description="Download and parse a D&D Beyond character sheet.",
@@ -1472,7 +1629,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--raw", metavar="PATH", help="also save the raw API payload to PATH")
     ap.add_argument("--pdf", metavar="PATH", help="render a printable PDF character sheet to PATH")
     ap.add_argument("--timeout", type=int, default=30)
+    _add_filter_option(ap, "filter-list", "FILTER_LIST (dropped everywhere)")
+    _add_filter_option(ap, "filter-summary", "FILTER_SUMMARY (dropped from the summary only)")
+    _add_filter_option(ap, "filter-description",
+                        "FILTER_DESCRIPTION (shown without a description)")
+    _add_pattern_option(ap, "filter-list", "FILTER_LIST (dropped everywhere)")
+    _add_pattern_option(ap, "filter-summary", "FILTER_SUMMARY (dropped from the summary only)")
+    _add_pattern_option(ap, "filter-description",
+                         "FILTER_DESCRIPTION (shown without a description)")
     args = ap.parse_args(argv)
+    _apply_filter_args(args)
 
     try:
         if os.path.exists(args.character):

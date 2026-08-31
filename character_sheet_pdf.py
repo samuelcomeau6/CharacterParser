@@ -35,6 +35,8 @@ from ddb_character import (
     Character,
     SKILLS,
     fmt,
+    in_filter_description,
+    in_filter_summary,
     titleize,
 )
 
@@ -861,27 +863,17 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
 
 _REST_SUFFIX = {"short": "/short rest", "long": "/long rest", "long_plus_short": "/long rest*"}
 
-# Passive descriptors that either aren't actionable at the table or are
-# already shown elsewhere on the sheet (Speed and Size in Combat/the header,
-# Languages under Other Proficiencies, ability score bumps in the score
-# boxes themselves) -- listing them again here is just noise.
-_REDUNDANT_SUMMARY_TRAITS = {"languages", "ability score increases", "speed", "size",
-                             "creature type"}
-_CORE_TRAITS_RE = re.compile(r"^core .+ traits$", re.IGNORECASE)
-
-
-def _is_redundant_summary_entry(name: str) -> bool:
-    low = name.lower()
-    return low in _REDUNDANT_SUMMARY_TRAITS or bool(_CORE_TRAITS_RE.match(low))
-
 
 def _build_feature_summary(b: SheetBuilder, c: Character) -> None:
     """Name-only roster of every trait/feature/feat, right under Attacks &
     Spellcasting -- full descriptions live later, near the Spell List.
     Anything with a tracked usage limit gets a checkbox per use, and those
-    entries are sorted to the top so they're easy to find mid-combat."""
+    entries are sorted to the top so they're easy to find mid-combat.
+    FILTER_SUMMARY entries (see ddb_character.py) are left off entirely --
+    they're passive descriptors either shown elsewhere on the sheet or not
+    actionable at the table -- but still appear in the full list below."""
     items = list(c.species_traits) + list(c.class_features) + list(c.feats)
-    items = [f for f in items if not _is_redundant_summary_entry(f.name)]
+    items = [f for f in items if not in_filter_summary(f.name)]
     if not items:
         return
 
@@ -1043,7 +1035,9 @@ def _build_feat_list(b: SheetBuilder, feats: List) -> None:
         b.ensure(11)
         b.cv.text(MARGIN, b.y + 9, feat.name, font="F2", size=8.5)
         b.y += 12
-        if feat.description:
+        if in_filter_description(feat.name):
+            pass  # FILTER_DESCRIPTION: name only, description withheld
+        elif feat.description:
             b.rich_text(feat.description, size=7.5, gray=0.25, leading=9.5)
         else:
             b.line("(no description in source data)", size=7, gray=0.45, dy=10)

@@ -6,7 +6,6 @@
 - The inventory should have its own dedicated page.
 - Creature size should be listed somewhere.
 - Animal Handling is weirdly abbreviated.
-- Create feat summary filter list and feature/trait filter list
-- Add filter list command line arguement
 - Add no feat/trait list command line arguement
 - Add no spell list command line arguement
+- Ability score improvement appears an incorrect number of times for the number of times the feat was chosen.
