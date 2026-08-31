@@ -965,8 +965,10 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
             b.cv.hline(MARGIN, b.y + 11, _ATTACK_TABLE_RIGHT, gray=0.85)
             b.y += 13
 
-    # Room to pencil in additional attacks.
-    for _ in range(3):
+    # Room to pencil in additional attacks -- enough blank rows to bring the
+    # table up to 6 total rows; none if there are already 6 or more.
+    row_count = len(c.attacks) + len(cantrips)
+    for _ in range(max(0, 6 - row_count)):
         b.ensure(13)
         b.cv.hline(MARGIN, b.y + 11, _ATTACK_TABLE_RIGHT, gray=0.55)
         b.y += 13
