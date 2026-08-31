@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import html
 import re
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from ddb_character import (
     ABBREV,
@@ -110,6 +110,35 @@ def wrap(s: str, font: str, size: float, max_width: float) -> List[str]:
     return lines
 
 
+# A short bolded lead-in at the start of a paragraph, e.g. "Damage
+# Resistance. You have Resistance to ..." or "Duration. The Rage lasts
+# until ..." -- the rules-text convention for calling out a sub-topic.
+_LEAD_IN_RE = re.compile(r"^(\S+(?:\s+\S+){0,4})\.(\s+)(.*)$", re.DOTALL)
+
+
+def _wrap_with_lead(text: str, font: str, size: float, full_width: float,
+                     first_line_width: float) -> List[str]:
+    """Like wrap(), but the first line is filled to `first_line_width`
+    (room already taken by a bold lead-in on that line) and every line
+    after it uses the full width."""
+    words = (text or "").split()
+    if not words:
+        return []
+    cur, i = "", 0
+    while i < len(words):
+        trial = f"{cur} {words[i]}".strip()
+        if not cur or text_width(trial, font, size) <= first_line_width:
+            cur = trial
+            i += 1
+        else:
+            break
+    lines = [cur] if cur else []
+    remainder = " ".join(words[i:])
+    if remainder:
+        lines.extend(wrap(remainder, font, size, full_width))
+    return lines
+
+
 # --------------------------------------------------------------------------
 # HTML -> plain text (D&D Beyond spell descriptions come as HTML)
 # --------------------------------------------------------------------------
@@ -129,6 +158,80 @@ def html_to_text(s: Optional[str]) -> str:
     s = _SPACES.sub(" ", s)
     s = _BLANK_LINES.sub("\n", s)
     return s.strip()
+
+
+# --------------------------------------------------------------------------
+# HTML tables embedded in a description (D&D Beyond compendium tables, e.g.
+# a cantrip-upgrade or class-feature-by-level table) -- stripped naively,
+# these collapse into an unreadable run of numbers and short phrases. Pull
+# them out and rebuild them as real tables instead.
+# --------------------------------------------------------------------------
+
+_TABLE_RE = re.compile(r"<table\b[^>]*>(.*?)</table>", re.IGNORECASE | re.DOTALL)
+_CAPTION_RE = re.compile(r"<caption\b[^>]*>(.*?)</caption>", re.IGNORECASE | re.DOTALL)
+_THEAD_RE = re.compile(r"<thead\b[^>]*>(.*?)</thead>", re.IGNORECASE | re.DOTALL)
+_TBODY_RE = re.compile(r"<tbody\b[^>]*>(.*?)</tbody>", re.IGNORECASE | re.DOTALL)
+_TR_RE = re.compile(r"<tr\b[^>]*>(.*?)</tr>", re.IGNORECASE | re.DOTALL)
+_TH_RE = re.compile(r"<th\b[^>]*>(.*?)</th>", re.IGNORECASE | re.DOTALL)
+_TD_RE = re.compile(r"<td\b[^>]*>(.*?)</td>", re.IGNORECASE | re.DOTALL)
+
+RichSegment = Tuple[str, object]  # ("text", str) or ("table", (caption, headers, rows))
+
+
+def _clean_cell(cell_html: str) -> str:
+    text = _TAG.sub(" ", cell_html)
+    text = html.unescape(text)
+    return _SPACES.sub(" ", text).strip()
+
+
+def _parse_table(inner_html: str) -> Tuple[Optional[str], List[str], List[List[str]]]:
+    caption = None
+    m = _CAPTION_RE.search(inner_html)
+    if m:
+        caption = _clean_cell(m.group(1)) or None
+
+    headers: List[str] = []
+    thead_m = _THEAD_RE.search(inner_html)
+    if thead_m:
+        for tr in _TR_RE.findall(thead_m.group(1)):
+            row = [_clean_cell(h) for h in _TH_RE.findall(tr)]
+            if row:
+                headers = row
+
+    tbody_m = _TBODY_RE.search(inner_html)
+    if tbody_m:
+        body_html = tbody_m.group(1)
+    elif thead_m:
+        body_html = inner_html[thead_m.end():]
+    else:
+        body_html = inner_html
+
+    rows: List[List[str]] = []
+    for tr in _TR_RE.findall(body_html):
+        cells = _TD_RE.findall(tr) or _TH_RE.findall(tr)
+        if cells:
+            rows.append([_clean_cell(c) for c in cells])
+
+    return caption, headers, rows
+
+
+def split_rich_text(s: Optional[str]) -> List[RichSegment]:
+    """Break a description into ordered ("text", str) / ("table", data)
+    segments so plain prose and embedded tables can be rendered
+    differently."""
+    s = s or ""
+    segments: List[RichSegment] = []
+    pos = 0
+    for m in _TABLE_RE.finditer(s):
+        text = html_to_text(s[pos:m.start()])
+        if text:
+            segments.append(("text", text))
+        segments.append(("table", _parse_table(m.group(1))))
+        pos = m.end()
+    tail = html_to_text(s[pos:])
+    if tail:
+        segments.append(("text", tail))
+    return segments
 
 
 # --------------------------------------------------------------------------
@@ -311,11 +414,100 @@ class SheetBuilder:
     def paragraph(self, text: str, size: float = 8.5, font: str = "F1",
                    gray: float = 0.0, width: float = CONTENT_W, x: Optional[float] = None,
                    leading: float = 10.5) -> None:
-        x = MARGIN if x is None else x
-        for ln in wrap(text, font, size, width):
+        x0 = MARGIN if x is None else x
+        for para in (text or "").split("\n"):
+            para = para.strip()
+            if not para:
+                continue  # stray blank line (D&D Beyond descriptions carry literal \r\n)
+            m = _LEAD_IN_RE.match(para)
+            if not m or not (1 <= len(m.group(1).split()) <= 5):
+                for ln in wrap(para, font, size, width):
+                    self.ensure(leading)
+                    self.cv.text(x0, self.y + 8, ln, font=font, size=size, gray=gray)
+                    self.y += leading
+                continue
+
+            lead = f"{m.group(1)}."
+            lead_w = text_width(lead, "F2", size)
+            first_w = max(20.0, width - lead_w - 4)
+            lines = _wrap_with_lead(m.group(3), font, size, width, first_w)
+
             self.ensure(leading)
-            self.cv.text(x, self.y + 8, ln, font=font, size=size, gray=gray)
+            self.cv.text(x0, self.y + 8, lead, font="F2", size=size, gray=gray)
+            if lines:
+                self.cv.text(x0 + lead_w + 4, self.y + 8, lines[0], font=font, size=size, gray=gray)
             self.y += leading
+            for ln in lines[1:]:
+                self.ensure(leading)
+                self.cv.text(x0, self.y + 8, ln, font=font, size=size, gray=gray)
+                self.y += leading
+
+    def table(self, caption: Optional[str], headers: List[str], rows: List[List[str]],
+               font_size: float = 7.5, header_size: float = 7.5, leading: float = 9.0,
+               pad: float = 4.0) -> None:
+        """A bordered grid table, column widths sized to content and scaled
+        to fit the page width, with wrapped multi-line cells."""
+        ncols = max(len(headers), max((len(r) for r in rows), default=0), 1)
+        headers = (list(headers) + [""] * ncols)[:ncols]
+        rows = [(list(r) + [""] * ncols)[:ncols] for r in rows]
+
+        natural = []
+        for ci in range(ncols):
+            w = text_width(headers[ci], "F2", header_size)
+            for r in rows:
+                w = max(w, text_width(r[ci], "F1", font_size))
+            natural.append(max(w, 30.0) + 2 * pad)
+        scale = CONTENT_W / sum(natural)
+        col_w = [w * scale for w in natural]
+
+        def wrapped(cells: List[str], font: str, size: float) -> List[List[str]]:
+            return [wrap(c, font, size, col_w[i] - 2 * pad) for i, c in enumerate(cells)]
+
+        if caption:
+            self.ensure(leading + 6)
+            self.cv.text(MARGIN, self.y + 9, caption, font="F2", size=8.5)
+            self.y += leading + 6
+
+        header_lines = wrapped(headers, "F2", header_size)
+        header_h = max(len(ls) for ls in header_lines) * leading + 2 * pad
+        body_lines = [wrapped(r, "F1", font_size) for r in rows]
+        row_heights = [max(len(ls) for ls in lines) * leading + 2 * pad for lines in body_lines]
+
+        self.ensure(header_h + sum(row_heights) + 6)
+        x0, y = MARGIN, self.y
+
+        x = x0
+        for i in range(ncols):
+            self.cv.rect(x, y, col_w[i], header_h)
+            for li, ln in enumerate(header_lines[i]):
+                self.cv.text(x + pad, y + pad + 7 + li * leading, ln, font="F2", size=header_size)
+            x += col_w[i]
+        y += header_h
+
+        for ri, lines in enumerate(body_lines):
+            x = x0
+            rh = row_heights[ri]
+            for i in range(ncols):
+                self.cv.rect(x, y, col_w[i], rh)
+                for li, ln in enumerate(lines[i]):
+                    self.cv.text(x + pad, y + pad + 7 + li * leading, ln, font="F1", size=font_size)
+                x += col_w[i]
+            y += rh
+
+        self.y = y + 6
+
+    def rich_text(self, html_text: Optional[str], size: float = 7.5, gray: float = 0.25,
+                   leading: float = 9.5) -> None:
+        """Render a description's prose and any embedded compendium tables,
+        in order."""
+        for kind, payload in split_rich_text(html_text):
+            if kind == "text":
+                self.paragraph(payload, size=size, gray=gray, leading=leading)
+                self.gap(2)
+            else:
+                caption, headers, rows = payload
+                if headers or rows:
+                    self.table(caption, headers, rows)
 
     def blank_lines(self, count: int, dy: float = 16.0, label: Optional[str] = None) -> None:
         if label:
@@ -666,6 +858,70 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
     b.gap(4)
 
 
+_REST_SUFFIX = {"short": "/short rest", "long": "/long rest", "long_plus_short": "/long rest*"}
+
+# Passive descriptors that either aren't actionable at the table or are
+# already shown elsewhere on the sheet (Speed and Size in Combat/the header,
+# Languages under Other Proficiencies, ability score bumps in the score
+# boxes themselves) -- listing them again here is just noise.
+_REDUNDANT_SUMMARY_TRAITS = {"languages", "ability score increases", "speed", "size",
+                             "creature type"}
+_CORE_TRAITS_RE = re.compile(r"^core .+ traits$", re.IGNORECASE)
+
+
+def _is_redundant_summary_entry(name: str) -> bool:
+    low = name.lower()
+    return low in _REDUNDANT_SUMMARY_TRAITS or bool(_CORE_TRAITS_RE.match(low))
+
+
+def _build_feature_summary(b: SheetBuilder, c: Character) -> None:
+    """Name-only roster of every trait/feature/feat, right under Attacks &
+    Spellcasting -- full descriptions live later, near the Spell List.
+    Anything with a tracked usage limit gets a checkbox per use, and those
+    entries are sorted to the top so they're easy to find mid-combat."""
+    items = list(c.species_traits) + list(c.class_features) + list(c.feats)
+    items = [f for f in items if not _is_redundant_summary_entry(f.name)]
+    if not items:
+        return
+
+    items = sorted(items, key=lambda f: f.max_uses is None)  # restricted first
+
+    b.section("Traits & Feats")
+    box, gap = 7.0, 4.0
+    col_gap = 16.0
+    col_w = (CONTENT_W - col_gap) / 2
+    col_x = [MARGIN, MARGIN + col_w + col_gap]
+    row_h = 13.0
+    needs_footnote = False
+
+    half = -(-len(items) // 2)
+    columns = [items[:half], items[half:]]
+    b.ensure(half * row_h + 4)
+    y0 = b.y
+
+    for ci, col_items in enumerate(columns):
+        x0 = col_x[ci]
+        y = y0
+        for feat in col_items:
+            b.cv.text(x0, y + 9, feat.name, font="F1", size=8.5)
+            if feat.max_uses:
+                x = x0 + text_width(feat.name, "F1", 8.5) + 10
+                for _ in range(feat.max_uses):
+                    b.cv.rect(x, y + 1, box, box)
+                    x += box + gap
+                suffix = _REST_SUFFIX[feat.rest_type]
+                if feat.rest_type == "long_plus_short":
+                    needs_footnote = True
+                b.cv.text(x + 3, y + 9, suffix, font="F1", size=7, gray=0.4)
+            y += row_h
+
+    b.y = y0 + half * row_h
+
+    if needs_footnote:
+        b.line("* One use is also regained after a short rest.", size=7, gray=0.45, dy=10)
+    b.gap(4)
+
+
 def _build_currency(b: SheetBuilder, c: Character) -> None:
     b.section("Currency")
     w = (CONTENT_W - 4 * 8) / 5
@@ -786,9 +1042,8 @@ def _build_feat_list(b: SheetBuilder, feats: List) -> None:
         b.ensure(11)
         b.cv.text(MARGIN, b.y + 9, feat.name, font="F2", size=8.5)
         b.y += 12
-        desc = html_to_text(feat.description)
-        if desc:
-            b.paragraph(desc, size=7.5, gray=0.25, leading=9.5)
+        if feat.description:
+            b.rich_text(feat.description, size=7.5, gray=0.25, leading=9.5)
         else:
             b.line("(no description in source data)", size=7, gray=0.45, dy=10)
         b.gap(3)
@@ -911,9 +1166,8 @@ def _build_spells(b: SheetBuilder, c: Character) -> None:
             if meta:
                 b.paragraph(meta, size=7, gray=0.4, leading=9.5)
 
-            desc = html_to_text(s.description)
-            if desc:
-                b.paragraph(desc, size=8, leading=10)
+            if s.description:
+                b.rich_text(s.description, size=8, gray=0.0, leading=10)
             else:
                 b.line("(see rulebook — no description in source data)", size=7.5, gray=0.45,
                         dy=10)
@@ -935,6 +1189,7 @@ def build_pdf(c: Character) -> PDFDocument:
     b.cv = b.doc.new_page()
     b.y = MARGIN
     _build_attacks(b, c)
+    _build_feature_summary(b, c)
     _build_spell_stats(b, c)
 
     b.cv = b.doc.new_page()

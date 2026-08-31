@@ -375,6 +375,11 @@ class Spell:
 class Feat:
     name: str
     description: Optional[str] = None
+    max_uses: Optional[int] = None
+    # "short" (all uses back on a short rest), "long" (all uses back on a
+    # long rest), or "long_plus_short" (one use back on a short rest, the
+    # rest on a long rest) -- None if the feature has no usage limit.
+    rest_type: Optional[str] = None
 
 
 @dataclass
@@ -482,6 +487,7 @@ def parse_character(data: dict) -> Character:
     classes = _parse_classes(data)
     total_level = sum(c.level for c in classes) or 1
     prof = 1 + math.ceil(total_level / 4)
+    actions = _flat_actions(data)
 
     abilities = _parse_abilities(data, mods, prof)
     skills = _parse_skills(abilities, mods, prof)
@@ -532,9 +538,9 @@ def parse_character(data: dict) -> Character:
         spells=_parse_spells(data),
         spell_slots=_parse_slots(data.get("spellSlots")) or _compute_spell_slots(classes),
         pact_slots=_parse_pact(data.get("pactMagic")) or _compute_pact_slots(classes),
-        feats=_parse_feats(data),
-        class_features=_parse_class_features(data),
-        species_traits=_parse_species_traits(data),
+        feats=_parse_feats(data, actions, prof),
+        class_features=_parse_class_features(data, actions, prof),
+        species_traits=_parse_species_traits(data, actions, prof),
         conditions=[(c.get("definition") or {}).get("name") or f"condition {c.get('id')}"
                     for c in (data.get("conditions") or [])],
         currencies={k: v for k, v in (data.get("currencies") or {}).items() if v},
@@ -1166,19 +1172,85 @@ def _compute_pact_slots(classes) -> Dict[str, int]:
 # "feats" list on this character but shouldn't show up as such.
 _IGNORED_FEATS = {"Dark Bargain", "Character Threads", "Runestones"}
 
+# D&D Beyond's `limitedUse.resetType` values, as observed on real characters.
+_RESET_SHORT_REST = 1
+_RESET_LONG_REST = 2
 
-def _parse_feats(data: dict) -> List[Feat]:
+# Some features (e.g. a Bard's Font of Inspiration) regain a single use on a
+# short rest but *all* uses on a long rest -- that nuance isn't a separate
+# resetType, it's only stated in the feature's own rules text.
+_PARTIAL_SHORT_RECHARGE_RE = re.compile(
+    r"regain(?:s)?\s+one\s+(?:expended\s+)?use\b[^.]{0,80}?short rest",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _flat_actions(data: dict) -> List[dict]:
+    """Every action entry (race/class/background/item/feat) that carries a
+    resolved `limitedUse` block -- the current-level use counts and reset
+    rule, as opposed to the per-level scaling table on the feature itself.
+    """
+    out = []
+    for entries in (data.get("actions") or {}).values():
+        for e in entries or []:
+            if e.get("limitedUse"):
+                out.append(e)
+    return out
+
+
+def _find_action(name: str, actions: List[dict]) -> Optional[dict]:
+    for a in actions:
+        if a.get("name") == name:
+            return a
+    # A feature's resolved action sometimes carries a qualifier the feature
+    # name itself doesn't, e.g. "Font of Magic: Sorcery Points" or
+    # "Breath Weapon (Fire)".
+    prefixes = (f"{name}:", f"{name} (")
+    for a in actions:
+        aname = a.get("name") or ""
+        if any(aname.startswith(p) for p in prefixes):
+            return a
+    return None
+
+
+def _feat_usage(name: str, description: Optional[str], actions: List[dict],
+                 prof: int) -> Tuple[Optional[int], Optional[str]]:
+    """(max_uses, rest_type) for a feat/feature/trait, or (None, None) if it
+    has no tracked usage limit."""
+    action = _find_action(name, actions)
+    if not action:
+        return None, None
+    lu = action.get("limitedUse") or {}
+    max_uses = lu.get("maxUses") or 0
+    if lu.get("useProficiencyBonus") and max_uses <= 0:
+        max_uses = prof
+    if max_uses <= 0:
+        return None, None
+
+    reset_type = lu.get("resetType")
+    if reset_type == _RESET_SHORT_REST:
+        return max_uses, "short"
+    if reset_type == _RESET_LONG_REST:
+        if _PARTIAL_SHORT_RECHARGE_RE.search(description or ""):
+            return max_uses, "long_plus_short"
+        return max_uses, "long"
+    return None, None
+
+
+def _parse_feats(data: dict, actions: List[dict], prof: int) -> List[Feat]:
     out = []
     for f in data.get("feats") or []:
         d = f.get("definition") or {}
         name = d.get("name")
         if not name or name in _IGNORED_FEATS:
             continue
-        out.append(Feat(name=name, description=d.get("description") or d.get("snippet")))
+        description = d.get("description") or d.get("snippet")
+        max_uses, rest_type = _feat_usage(name, description, actions, prof)
+        out.append(Feat(name=name, description=description, max_uses=max_uses, rest_type=rest_type))
     return out
 
 
-def _parse_class_features(data: dict) -> List[Feat]:
+def _parse_class_features(data: dict, actions: List[dict], prof: int) -> List[Feat]:
     """Class features the character actually has at their current level.
 
     Each class carries its *entire* feature list (all 20 levels' worth) in
@@ -1196,11 +1268,14 @@ def _parse_class_features(data: dict) -> List[Feat]:
             if not name or required > level or name in seen:
                 continue
             seen.add(name)
-            out.append(Feat(name=name, description=d.get("description") or d.get("snippet")))
+            description = d.get("description") or d.get("snippet")
+            max_uses, rest_type = _feat_usage(name, description, actions, prof)
+            out.append(Feat(name=name, description=description, max_uses=max_uses,
+                             rest_type=rest_type))
     return out
 
 
-def _parse_species_traits(data: dict) -> List[Feat]:
+def _parse_species_traits(data: dict, actions: List[dict], prof: int) -> List[Feat]:
     out = []
     seen = set()
     for t in (data.get("race") or {}).get("racialTraits") or []:
@@ -1209,7 +1284,9 @@ def _parse_species_traits(data: dict) -> List[Feat]:
         if not name or name in seen:
             continue
         seen.add(name)
-        out.append(Feat(name=name, description=d.get("description") or d.get("snippet")))
+        description = d.get("description") or d.get("snippet")
+        max_uses, rest_type = _feat_usage(name, description, actions, prof)
+        out.append(Feat(name=name, description=description, max_uses=max_uses, rest_type=rest_type))
     return out
 
 

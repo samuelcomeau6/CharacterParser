@@ -1,9 +1,10 @@
+- Weapon mastery should be displayed in the notes section of the attack if the character has mastery for that weapon.
+- Known weapon mastery abilities should be listed in the feat summary and the feat list.
 - Other proficiencies and languages should be located near the end of the character sheet, above Features and traits
-- Just under Attacks and Spellcasting there should be a list of traits and feats without descriptions and any that have usage restrictions should have checkboxes.
 - There needs to be a magical items section that lists all items that have magical properties and shows attunement slots. Magical items that have charges should have checkboxes.
 - There needs to be a section that give the description of any magical items.
 - The character appearance section should have a large portrait box next to it that occupies half the horizontal space of the page. 
-- Some features, traits and spell descriptions containt tables and are denoted by regularly patterned blank lines and lines that only have a number or small phrase. These should be reconstituted as tables.
-- All feature, trait, and spell descriptions should be stripped of empty lines. To aid readability lines should have hanging indents.
-- In any feature or spell description, if there is a one, two or three words starting a line with a period after them, they should be bold.
 - Saves and skills should have a right justified (P) after the modifier if the character has proficiency or an (E) if they have expertise.
+- The inventory should have its own dedicated page.
+- Creature size should be listed somewhere.
+- Animal Handling is weirdly abbreviated.
