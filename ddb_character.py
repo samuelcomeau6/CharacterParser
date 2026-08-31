@@ -1668,6 +1668,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--json", action="store_true", help="print the parsed character as JSON")
     ap.add_argument("--raw", metavar="PATH", help="also save the raw API payload to PATH")
     ap.add_argument("--pdf", metavar="PATH", help="render a printable PDF character sheet to PATH")
+    ap.add_argument("--no-magic-item-descriptions", action="store_true",
+                     help="omit the Magical Item Descriptions list from the PDF")
+    ap.add_argument("--no-feat-descriptions", action="store_true",
+                     help="omit the Features & Traits description list from the PDF")
+    ap.add_argument("--no-spell-descriptions", action="store_true",
+                     help="omit the Spell List description list from the PDF")
     ap.add_argument("--timeout", type=int, default=30)
     _add_filter_option(ap, "filter-list", "FILTER_LIST (dropped everywhere)")
     _add_filter_option(ap, "filter-summary", "FILTER_SUMMARY (dropped from the summary only)")
@@ -1700,7 +1706,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.pdf:
         from character_sheet_pdf import render_pdf
-        render_pdf(char, args.pdf)
+        render_pdf(char, args.pdf,
+                   include_magic_item_descriptions=not args.no_magic_item_descriptions,
+                   include_feat_descriptions=not args.no_feat_descriptions,
+                   include_spell_descriptions=not args.no_spell_descriptions)
         print(f"PDF character sheet written to {args.pdf}", file=sys.stderr)
 
     print(char.to_json() if args.json else render_sheet(char))

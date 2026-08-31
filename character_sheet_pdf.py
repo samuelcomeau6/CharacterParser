@@ -1260,7 +1260,9 @@ def _build_spells(b: SheetBuilder, c: Character) -> None:
 # --------------------------------------------------------------------------
 
 
-def build_pdf(c: Character) -> PDFDocument:
+def build_pdf(c: Character, *, include_magic_item_descriptions: bool = True,
+              include_feat_descriptions: bool = True,
+              include_spell_descriptions: bool = True) -> PDFDocument:
     b = SheetBuilder()
     _build_header(b, c)
     _build_combat(b, c)
@@ -1283,16 +1285,26 @@ def build_pdf(c: Character) -> PDFDocument:
     b.y = MARGIN
     _build_appearance_and_backstory(b, c)
 
-    b.cv = b.doc.new_page()
-    b.y = MARGIN
-    _build_magical_item_descriptions(b, c)
-    _build_features(b, c)
-    _build_spells(b, c)
+    # Skip the final page entirely if every description list on it has
+    # been turned off, rather than leaving a blank trailing page.
+    if include_magic_item_descriptions or include_feat_descriptions or include_spell_descriptions:
+        b.cv = b.doc.new_page()
+        b.y = MARGIN
+        if include_magic_item_descriptions:
+            _build_magical_item_descriptions(b, c)
+        if include_feat_descriptions:
+            _build_features(b, c)
+        if include_spell_descriptions:
+            _build_spells(b, c)
 
     return b.doc
 
 
-def render_pdf(c: Character, path: str) -> None:
+def render_pdf(c: Character, path: str, *, include_magic_item_descriptions: bool = True,
+               include_feat_descriptions: bool = True,
+               include_spell_descriptions: bool = True) -> None:
     """Render `c` as a printable, greyscale-friendly PDF character sheet."""
-    doc = build_pdf(c)
+    doc = build_pdf(c, include_magic_item_descriptions=include_magic_item_descriptions,
+                     include_feat_descriptions=include_feat_descriptions,
+                     include_spell_descriptions=include_spell_descriptions)
     doc.write(path)

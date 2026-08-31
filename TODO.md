@@ -2,7 +2,5 @@
 - Saves and skills should have a right justified (P) after the modifier if the character has proficiency or an (E) if they have expertise.
 - The inventory should have its own dedicated page.
 - Animal Handling is weirdly abbreviated.
-- Add no feat/trait list command line arguement
-- Add no spell list command line arguement
 - Ability score improvement appears an incorrect number of times for the number of times the feat was chosen.
 - Metamagic options that have been selected are not parse correctly.
