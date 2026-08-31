@@ -358,6 +358,11 @@ class Spell:
     source: str
     ritual: bool = False
     concentration: bool = False
+    description: Optional[str] = None
+    casting_time: Optional[str] = None
+    range_text: Optional[str] = None
+    duration_text: Optional[str] = None
+    components_text: Optional[str] = None
 
 
 @dataclass
@@ -808,6 +813,65 @@ def _parse_inventory(data: dict) -> List[Item]:
     return out
 
 
+_ACTIVATION_TYPES = {
+    1: "Action", 2: "No Action", 3: "Bonus Action", 4: "Reaction",
+    5: "Minute", 6: "Hour", 7: "Special", 8: "Legendary Action",
+}
+_COMPONENT_LETTERS = {1: "V", 2: "S", 3: "M"}
+
+
+def _spell_casting_time(d: dict) -> Optional[str]:
+    act = d.get("activation") or {}
+    atype = act.get("activationType")
+    label = _ACTIVATION_TYPES.get(atype)
+    n = act.get("activationTime")
+    if not label:
+        return None
+    if n and n != 1:
+        return f"{n} {label}s" if label in ("Minute", "Hour") else f"{label} ({n})"
+    return "1 " + label if label in ("Minute", "Hour") else label
+
+
+def _spell_range(d: dict) -> Optional[str]:
+    r = d.get("range") or {}
+    origin = r.get("origin")
+    if origin in ("Self", "Touch"):
+        text = origin
+    elif r.get("rangeValue"):
+        text = f"{r['rangeValue']} ft."
+    else:
+        return None
+    if r.get("aoeType") and r.get("aoeValue"):
+        text += f" ({r['aoeValue']} ft. {r['aoeType']})"
+    return text
+
+
+def _spell_duration(d: dict) -> Optional[str]:
+    du = d.get("duration") or {}
+    unit = du.get("durationUnit")
+    if not unit:
+        return None
+    if unit == "Instantaneous":
+        text = "Instantaneous"
+    else:
+        interval = du.get("durationInterval") or 1
+        text = f"{interval} {unit}" + ("s" if interval != 1 else "")
+    if d.get("concentration"):
+        text = f"Concentration, up to {text}" if unit != "Instantaneous" else text
+    return text
+
+
+def _spell_components(d: dict) -> Optional[str]:
+    comps = d.get("components") or []
+    letters = [_COMPONENT_LETTERS[c] for c in comps if c in _COMPONENT_LETTERS]
+    if not letters:
+        return None
+    text = ", ".join(letters)
+    if "M" in letters and d.get("componentsDescription"):
+        text += f" ({d['componentsDescription']})"
+    return text
+
+
 def _parse_spells(data: dict) -> List[Spell]:
     out: List[Spell] = []
     seen = set()
@@ -829,6 +893,11 @@ def _parse_spells(data: dict) -> List[Spell]:
             source=source,
             ritual=bool(d.get("ritual")),
             concentration=bool(d.get("concentration")),
+            description=d.get("description"),
+            casting_time=_spell_casting_time(d),
+            range_text=_spell_range(d),
+            duration_text=_spell_duration(d),
+            components_text=_spell_components(d),
         ))
 
     for bucket, entries in (data.get("spells") or {}).items():
@@ -984,6 +1053,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--cobalt", help="D&D Beyond CobaltSession cookie value")
     ap.add_argument("--json", action="store_true", help="print the parsed character as JSON")
     ap.add_argument("--raw", metavar="PATH", help="also save the raw API payload to PATH")
+    ap.add_argument("--pdf", metavar="PATH", help="render a printable PDF character sheet to PATH")
     ap.add_argument("--timeout", type=int, default=30)
     args = ap.parse_args(argv)
 
@@ -1004,6 +1074,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     except urllib.error.URLError as exc:
         print(f"network error: {exc}", file=sys.stderr)
         return 1
+
+    if args.pdf:
+        from character_sheet_pdf import render_pdf
+        render_pdf(char, args.pdf)
+        print(f"PDF character sheet written to {args.pdf}", file=sys.stderr)
 
     print(char.to_json() if args.json else render_sheet(char))
     return 0
