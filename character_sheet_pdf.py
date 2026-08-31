@@ -561,8 +561,8 @@ SKILL_BLURB = {
 }
 
 SKILL_SHORT = {
-    "animal handling": "An. Handling",
-    "sleight of hand": "Slt of Hand",
+    "animal handling": "Animal Handling",
+    "sleight of hand": "Sleight of Hand",
 }
 
 CURRENCIES_ORDER = ["cp", "sp", "ep", "gp", "pp"]
