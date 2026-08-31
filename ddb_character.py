@@ -339,6 +339,7 @@ class Item:
     requires_attunement: bool = False
     description: Optional[str] = None
     max_charges: Optional[int] = None  # None unless it's a genuine multi-charge item
+    notes: Optional[str] = None  # the player's own note on this item, if any
 
 
 @dataclass
@@ -867,25 +868,29 @@ def _parse_attacks(data: dict, abilities, mods, prof: int,
 
 
 # characterValues typeId 8 is a player-given custom name for an inventory
-# item (e.g. renaming an unidentified item), keyed by the item's id.
+# item (e.g. renaming an unidentified item); typeId 9 is a free-form note
+# on one, both keyed by the item's id.
 _CUSTOM_NAME_TYPE_ID = 8
+_CUSTOM_NOTES_TYPE_ID = 9
 
 
-def _custom_item_names(data: dict) -> Dict[str, str]:
+def _custom_item_values(data: dict, type_id: int) -> Dict[str, str]:
     return {
         str(cv.get("valueId")): cv.get("value")
         for cv in data.get("characterValues") or []
-        if cv.get("typeId") == _CUSTOM_NAME_TYPE_ID and cv.get("value")
+        if cv.get("typeId") == type_id and cv.get("value")
     }
 
 
 def _parse_inventory(data: dict) -> List[Item]:
-    custom_names = _custom_item_names(data)
+    custom_names = _custom_item_values(data, _CUSTOM_NAME_TYPE_ID)
+    custom_notes = _custom_item_values(data, _CUSTOM_NOTES_TYPE_ID)
     out = []
     for item in data.get("inventory") or []:
         d = item.get("definition") or {}
         base_name = d.get("name") or "?"
-        custom_name = custom_names.get(str(item.get("id")))
+        item_id = str(item.get("id"))
+        custom_name = custom_names.get(item_id)
 
         # A "charge" item is a rechargeable magic item (a wand, staff, ...)
         # tracked via limitedUse.maxUses > 1 -- a single-use consumable
@@ -914,6 +919,7 @@ def _parse_inventory(data: dict) -> List[Item]:
             requires_attunement=bool(d.get("canAttune")),
             description=d.get("description"),
             max_charges=max_charges,
+            notes=custom_notes.get(item_id),
         ))
     return out
 

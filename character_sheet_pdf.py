@@ -1239,7 +1239,10 @@ def _build_magical_item_descriptions(b: SheetBuilder, c: Character) -> None:
     if not magic_items:
         return
     b.section("Magical Item Descriptions")
-    _build_feat_list(b, magic_items)  # same name/description layout as feats
+    # A player's own note on an item (e.g. what they've learned it does)
+    # takes priority over the item's stock rules text.
+    items = [dataclasses.replace(i, description=i.notes) if i.notes else i for i in magic_items]
+    _build_feat_list(b, items)  # same name/description layout as feats
 
 
 def _build_feat_list(b: SheetBuilder, feats: List) -> None:
