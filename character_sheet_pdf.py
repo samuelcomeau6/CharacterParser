@@ -862,16 +862,22 @@ def _cantrip_damage(s, char_level: int) -> str:
     return f"{dice} {s.damage_type}".strip() if s.damage_type else dice
 
 
+# Attacks & Cantrips (left half), Traits & Feats (right half), and
+# Spellcasting (left half, under Attacks & Cantrips) all share this
+# half-page split.
+_HALF_COL_W = CONTENT_W / 2
+_LEFT_COL_X = MARGIN
+_RIGHT_COL_X = MARGIN + _HALF_COL_W
+
 # Column layout for Attacks and Cantrips, sized in characters (of the F1
 # body text at the row size below) rather than bare points, and confined
 # to the left half of the page. ATK keeps a fixed 6-character minimum
 # (it must still fit e.g. "CON 14"); NAME and DMG get reasonable caps,
-# and NOTES takes whatever's left of the half-width, plus a bit extra
-# since the page's right half is otherwise blank so minor overflow there
-# is harmless and keeps NOTES text more legibly complete.
+# and NOTES takes whatever's left of the half-width, tuned with a bit of
+# extra headroom to match its column's actual width.
 _ATTACK_ROW_SIZE = 8.5
 _ATTACK_CHAR_W = text_width("0", "F1", _ATTACK_ROW_SIZE)
-_ATTACK_TABLE_W = CONTENT_W / 2
+_ATTACK_TABLE_W = _HALF_COL_W
 _ATTACK_NAME_MAXCHARS = 19
 _ATTACK_ATKB_MAXCHARS = 6
 _ATTACK_DAMAGE_MAXCHARS = 12
@@ -888,6 +894,10 @@ _ATTACK_COL_ATKB = _ATTACK_COL_NAME + _ATTACK_NAME_W
 _ATTACK_COL_DMG = _ATTACK_COL_ATKB + _ATTACK_ATKB_W + _ATTACK_DMG_GAP_W
 _ATTACK_COL_NOTES = _ATTACK_COL_DMG + _ATTACK_DAMAGE_W
 _ATTACK_TABLE_RIGHT = MARGIN + _ATTACK_TABLE_W
+# The header/row separator lines stop a bit short of the table's own right
+# edge (rather than at _ATTACK_TABLE_RIGHT) so they don't visually run
+# into Traits & Feats, which starts immediately to the right of it.
+_ATTACK_LINE_RIGHT = _ATTACK_TABLE_RIGHT - 5 * _ATTACK_CHAR_W
 
 
 def _build_attacks(b: SheetBuilder, c: Character) -> None:
@@ -895,7 +905,7 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
     # only occupies the left half, so its header rule should match.
     b.ensure(24)
     b.cv.text(MARGIN, b.y + 9, "ATTACKS & CANTRIPS", font="F2", size=10)
-    b.cv.hline(MARGIN, b.y + 13, _ATTACK_TABLE_RIGHT, gray=0.6)
+    b.cv.hline(MARGIN, b.y + 13, _ATTACK_LINE_RIGHT, gray=0.6)
     b.y += 20
 
     b.ensure(13)
@@ -904,7 +914,7 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
     for x, label in cols:
         b.cv.text(x, b.y + 8, label, font="F2", size=7.5, gray=0.4)
     b.y += 11
-    b.cv.hline(MARGIN, b.y, _ATTACK_TABLE_RIGHT, gray=0.6)
+    b.cv.hline(MARGIN, b.y, _ATTACK_LINE_RIGHT, gray=0.6)
     b.y += 4
 
     for a in c.attacks:
@@ -927,7 +937,7 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
         props_text = ", ".join(notes_parts)
         b.cv.text(_ATTACK_COL_NOTES, b.y + 9, props_text[:_ATTACK_NOTES_MAXCHARS],
                   font="F1", size=7.5, gray=0.4)
-        b.cv.hline(MARGIN, b.y + 11, _ATTACK_TABLE_RIGHT, gray=0.85)
+        b.cv.hline(MARGIN, b.y + 11, _ATTACK_LINE_RIGHT, gray=0.85)
         b.y += 13
 
     # Every known cantrip counts as an at-will "attack" at the table, so it
@@ -962,7 +972,7 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
                       font="F1", size=8.5)
             b.cv.text(_ATTACK_COL_NOTES, b.y + 9, (s.range_text or "")[:_ATTACK_NOTES_MAXCHARS],
                       font="F1", size=7.5, gray=0.4)
-            b.cv.hline(MARGIN, b.y + 11, _ATTACK_TABLE_RIGHT, gray=0.85)
+            b.cv.hline(MARGIN, b.y + 11, _ATTACK_LINE_RIGHT, gray=0.85)
             b.y += 13
 
     # Room to pencil in additional attacks -- enough blank rows to bring the
@@ -972,7 +982,7 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
     row_count = len(c.attacks) + len(cantrips)
     for _ in range(max(0, 6 - row_count)):
         b.ensure(13)
-        b.cv.hline(MARGIN, b.y + 11, _ATTACK_TABLE_RIGHT, gray=0.85)
+        b.cv.hline(MARGIN, b.y + 11, _ATTACK_LINE_RIGHT, gray=0.85)
         b.y += 13
     b.gap(4)
 
@@ -980,14 +990,16 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
 _REST_SUFFIX = {"short": "/short rest", "long": "/long rest", "long_plus_short": "/long rest*"}
 
 
-def _build_feature_summary(b: SheetBuilder, c: Character) -> None:
-    """Name-only roster of every trait/feature/feat, right under Attacks &
-    Spellcasting -- full descriptions live later, near the Spell List.
-    Anything with a tracked usage limit gets a checkbox per use, and those
-    entries are sorted to the top so they're easy to find mid-combat.
-    FILTER_SUMMARY entries (see ddb_character.py) are left off entirely --
-    they're passive descriptors either shown elsewhere on the sheet or not
-    actionable at the table -- but still appear in the full list below."""
+def _build_feature_summary(b: SheetBuilder, c: Character,
+                            x0: float = MARGIN, width: float = CONTENT_W) -> None:
+    """Name-only roster of every trait/feature/feat, on the right half of
+    the page next to Attacks & Cantrips -- full descriptions live later,
+    near the Spell List. Anything with a tracked usage limit gets a
+    checkbox per use, and those entries are sorted to the top so they're
+    easy to find mid-combat. FILTER_SUMMARY entries (see ddb_character.py)
+    are left off entirely -- they're passive descriptors either shown
+    elsewhere on the sheet or not actionable at the table -- but still
+    appear in the full list below."""
     items = list(c.species_traits) + list(c.class_features) + list(c.feats)
     items = [f for f in items if not in_filter_summary(f.name)]
     if not items:
@@ -995,49 +1007,87 @@ def _build_feature_summary(b: SheetBuilder, c: Character) -> None:
 
     items = sorted(items, key=lambda f: f.max_uses is None)  # restricted first
 
-    b.section("Traits & Feats")
+    # Not b.section(), which underlines the full page width -- this list
+    # only occupies its own column, so its header rule should match.
+    b.ensure(24)
+    b.cv.text(x0, b.y + 9, "TRAITS & FEATS", font="F2", size=10)
+    b.cv.hline(x0, b.y + 13, x0 + width, gray=0.6)
+    b.y += 20
+
     box, gap = 7.0, 4.0
-    col_gap = 16.0
-    col_w = (CONTENT_W - col_gap) / 2
-    col_x = [MARGIN, MARGIN + col_w + col_gap]
+    inner_gap = 10.0
+    inner_col_w = (width - inner_gap) / 2
+    inner_col_x = [x0, x0 + inner_col_w + inner_gap]
     row_h = 13.0
+    _FEAT_WRAP_INDENT = 14.0
     needs_footnote = False
 
-    def draw_entry(x0: float, y: float, feat) -> None:
+    def fits_one_line(feat) -> bool:
+        """Whether name + action tag + checkboxes + rest suffix all fit
+        across the inner column's width on a single line."""
+        if not feat.max_uses:
+            return True
+        w = text_width(feat.name, "F1", 8.5)
+        if feat.action_type:
+            w += text_width(f" ({feat.action_type})", "F1", 7)
+        suffix = _REST_SUFFIX[feat.rest_type]
+        w += 10 + feat.max_uses * (box + gap) + 3 + text_width(suffix, "F1", 7)
+        return w <= inner_col_w
+
+    def draw_entry(x: float, y: float, feat, one_line: bool) -> None:
         nonlocal needs_footnote
-        b.cv.text(x0, y + 9, feat.name, font="F1", size=8.5)
-        x = x0 + text_width(feat.name, "F1", 8.5)
+        b.cv.text(x, y + 9, feat.name, font="F1", size=8.5)
+        cx = x + text_width(feat.name, "F1", 8.5)
         if feat.action_type:
             tag = f" ({feat.action_type})"
-            b.cv.text(x, y + 9, tag, font="F1", size=7, gray=0.4)
-            x += text_width(tag, "F1", 7)
+            b.cv.text(cx, y + 9, tag, font="F1", size=7, gray=0.4)
+            cx += text_width(tag, "F1", 7)
         if feat.max_uses:
-            x += 10
+            # Checkboxes + rest suffix wrap to their own line under the
+            # name whenever they wouldn't fit on the name's line without
+            # spilling into the next column. Indented (rather than flush
+            # with the name) so it's visually clear they belong to the
+            # name above rather than looking like a stray blank line.
+            if one_line:
+                cx += 10
+                cy = y
+            else:
+                cx = x + _FEAT_WRAP_INDENT
+                cy = y + row_h
             for _ in range(feat.max_uses):
-                b.cv.rect(x, y + 1, box, box)
-                x += box + gap
+                b.cv.rect(cx, cy + 1, box, box)
+                cx += box + gap
             suffix = _REST_SUFFIX[feat.rest_type]
             if feat.rest_type == "long_plus_short":
                 needs_footnote = True
-            b.cv.text(x + 3, y + 9, suffix, font="F1", size=7, gray=0.4)
+            b.cv.text(cx + 3, cy + 9, suffix, font="F1", size=7, gray=0.4)
 
-    # Pair items row by row (2 per row, one per column) rather than
-    # splitting the list into a first-half/second-half block reserved in
-    # one go -- reserving a whole two-column block up front can't be
-    # continued past a page break, so a long enough list would run off
-    # the bottom of the page. Checking room one row at a time lets the
-    # normal ensure()-driven page break land cleanly on a row boundary,
-    # with both columns continuing correctly on the next page.
-    for i in range(0, len(items), 2):
-        b.ensure(row_h)
+    # Alternate items between the two inner columns and let each column's
+    # cursor advance independently, rather than pairing item i with item
+    # i+1 on a shared row -- a shared row would have to be as tall as
+    # whichever of the two wrapped its checkboxes, leaving unexplained
+    # blank space under the other one whenever only one side wrapped.
+    # _build_attacks_and_features already reserves this whole section's
+    # height up front, so no ensure() is needed while drawing either
+    # column here (compare _build_hitdice_and_passives, which does the
+    # same: one reservation, then two independently-advancing columns).
+    def draw_column(x: float, col_items) -> float:
         y = b.y
-        draw_entry(col_x[0], y, items[i])
-        if i + 1 < len(items):
-            draw_entry(col_x[1], y, items[i + 1])
-        b.y += row_h
+        for feat in col_items:
+            one_line = fits_one_line(feat)
+            draw_entry(x, y, feat, one_line)
+            y += row_h if one_line else row_h * 2
+        return y
+
+    left_bottom = draw_column(inner_col_x[0], items[0::2])
+    right_bottom = draw_column(inner_col_x[1], items[1::2])
+    b.y = max(left_bottom, right_bottom)
 
     if needs_footnote:
-        b.line("* One use is also regained after a short rest.", size=7, gray=0.45, dy=10)
+        b.ensure(10)
+        b.cv.text(x0, b.y + 6, "* One use is also regained after a short rest.",
+                  font="F1", size=7, gray=0.45)
+        b.y += 10
     b.gap(4)
 
 
@@ -1385,21 +1435,29 @@ def _spell_meta(s) -> str:
     return "   ".join(bits)
 
 
-def _build_spell_stats(b: SheetBuilder, c: Character) -> None:
-    """Spellcasting modifier, save DC, attack bonus, and slots — kept
-    alongside the Traits & Feats summary rather than off with the spell
-    list."""
+def _build_spell_stats(b: SheetBuilder, c: Character,
+                        x0: float = MARGIN, width: float = CONTENT_W) -> None:
+    """Spellcasting modifier, save DC, attack bonus, and slots -- on the
+    left half of the page, directly under Attacks & Cantrips."""
     casters = [cl for cl in c.classes if cl.spellcasting_ability]
     if not casters and not c.spell_slots and not c.pact_slots:
         return
 
-    b.section("Spellcasting")
+    # Not b.section(), which underlines the full page width -- this block
+    # only occupies its own column, so its header rule should match.
+    b.ensure(24)
+    b.cv.text(x0, b.y + 9, "SPELLCASTING", font="F2", size=10)
+    b.cv.hline(x0, b.y + 13, x0 + width, gray=0.6)
+    b.y += 20
+
     for cl in casters:
         ab = c.abilities[cl.spellcasting_ability]
         dc = 8 + c.proficiency_bonus + ab.modifier
         atk = c.proficiency_bonus + ab.modifier
-        b.line(f"{cl.name}: {ABBREV[cl.spellcasting_ability]} modifier {fmt(ab.modifier)}   "
-               f"Save DC {dc}   Attack {fmt(atk)}", font="F2", size=9)
+        b.ensure(13)
+        b.cv.text(x0, b.y + 9, f"{cl.name}: {ABBREV[cl.spellcasting_ability]} modifier "
+                  f"{fmt(ab.modifier)}   Save DC {dc}   Attack {fmt(atk)}", font="F2", size=9)
+        b.y += 13
 
     sbox, sgap = 8.0, 5.0
 
@@ -1407,8 +1465,8 @@ def _build_spell_stats(b: SheetBuilder, c: Character) -> None:
         if not count:
             return
         b.ensure(14)
-        b.cv.text(MARGIN, b.y + 9, label, font="F1", size=8.5)
-        x = MARGIN + text_width(label, "F1", 8.5) + 12
+        b.cv.text(x0, b.y + 9, label, font="F1", size=8.5)
+        x = x0 + text_width(label, "F1", 8.5) + 12
         for _ in range(count):
             b.cv.rect(x, b.y + 1, sbox, sbox)
             x += sbox + sgap
@@ -1420,6 +1478,34 @@ def _build_spell_stats(b: SheetBuilder, c: Character) -> None:
         slot_checkboxes(f"Pact Magic (Level {c.pact_slots.get('level')}):",
                          c.pact_slots.get("slots", 0))
     b.gap(4)
+
+
+def _left_column_attacks_and_spells(b: SheetBuilder, c: Character) -> None:
+    """Attacks & Cantrips followed immediately by Spellcasting -- the
+    left-hand stack that runs alongside Traits & Feats on the right."""
+    _build_attacks(b, c)
+    _build_spell_stats(b, c, x0=_LEFT_COL_X, width=_HALF_COL_W)
+
+
+def _build_attacks_and_features(b: SheetBuilder, c: Character) -> None:
+    """Attacks & Cantrips + Spellcasting (left half) beside Traits & Feats
+    (right half): two independent column stacks starting at the same y.
+    Heights are measured up front (see _measure_height) and the whole
+    block reserved in one ensure() -- like _build_hitdice_and_passives --
+    so neither column's internal page breaks can desync from the other."""
+    left_h = _measure_height(_left_column_attacks_and_spells, c)
+    right_h = _measure_height(_build_feature_summary, c)
+    b.ensure(max(left_h, right_h))
+
+    y0 = b.y
+    _left_column_attacks_and_spells(b, c)
+    left_bottom = b.y
+
+    b.y = y0
+    _build_feature_summary(b, c, x0=_RIGHT_COL_X, width=_HALF_COL_W)
+    right_bottom = b.y
+
+    b.y = max(left_bottom, right_bottom)
 
 
 def _build_spells(b: SheetBuilder, c: Character) -> None:
@@ -1475,9 +1561,7 @@ def build_pdf(c: Character, *, include_magic_item_descriptions: bool = True,
     _build_combat(b, c)
     _build_hitdice_and_passives(b, c)
     _build_ability_columns(b, c)
-    _build_attacks(b, c)
-    _build_feature_summary(b, c)
-    _build_spell_stats(b, c)
+    _build_attacks_and_features(b, c)
     _build_other_proficiencies(b, c)
     _build_inventory(b, c)
     _build_magical_items(b, c)
