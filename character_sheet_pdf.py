@@ -28,7 +28,7 @@ from __future__ import annotations
 import dataclasses
 import html
 import re
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ddb_character import (
     ABBREV,
@@ -714,7 +714,6 @@ def _build_other_proficiencies(b: SheetBuilder, c: Character) -> None:
 
 def _build_combat(b: SheetBuilder, c: Character) -> None:
     b.section("Combat")
-    speed_text = ", ".join(f"{k} {v} ft." for k, v in c.speeds.items()) or "30 ft."
 
     # AC, Proficiency Bonus, Speed, and Initiative each get a box; Temp/
     # Current/Max HP share one wider box (in that order) split by two
@@ -736,9 +735,25 @@ def _build_combat(b: SheetBuilder, c: Character) -> None:
         b.cv.text_centered(x + box_w / 2, y + 34, str(value), font="F1", size=size)
         x += box_w + gap
 
+    def speed_box(label: str, speeds: Dict[str, int]) -> None:
+        # A character can have more than one movement speed (walk plus
+        # climb/swim/fly, ...) -- stack them one per line rather than
+        # cramming a single long comma-joined string onto one line.
+        nonlocal x
+        b.blank_box(x, y, box_w, h, label, label_size=6.5)
+        lines = [f"{k} {v} ft." for k, v in speeds.items()] or ["30 ft."]
+        n = len(lines)
+        start_size = 15.0 if n == 1 else (11.0 if n == 2 else 9.0)
+        size = fit_size(max(lines, key=len), box_w - 8, start=start_size, min_size=6.5)
+        spacing = 0.0 if n <= 1 else min(14.0, 24.0 / (n - 1))
+        top = 34.0 - (n - 1) * spacing / 2
+        for i, ln in enumerate(lines):
+            b.cv.text_centered(x + box_w / 2, y + top + i * spacing, ln, font="F1", size=size)
+        x += box_w + gap
+
     stat_box("AC", c.armor_class)
     stat_box("PROF. BONUS", fmt(c.proficiency_bonus))
-    stat_box("SPEED", speed_text)
+    speed_box("SPEED", c.speeds)
     stat_box("INITIATIVE", fmt(c.initiative))
 
     # HP block: Temp HP, Current HP, Max HP, left to right, in one box.

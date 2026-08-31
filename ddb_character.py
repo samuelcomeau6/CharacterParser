@@ -706,14 +706,18 @@ def _parse_speeds(data: dict, mods) -> Dict[str, int]:
     if not speeds:
         speeds = {"walk": 30}
 
-    for _, m in mods:
-        if m.get("type") == "set" and (m.get("subType") or "").startswith("innate-speed-"):
-            key = m["subType"].replace("innate-speed-", "").replace("ing", "")
-            speeds[key] = max(speeds.get(key, 0), _value_of(m))
-
     walk_bonus = _sum_bonus(mods, "speed", "unarmored-movement", "walking-speed")
     if walk_bonus:
         speeds["walk"] = speeds.get("walk", 30) + walk_bonus
+
+    for _, m in mods:
+        if m.get("type") == "set" and (m.get("subType") or "").startswith("innate-speed-"):
+            key = m["subType"].replace("innate-speed-", "").replace("ing", "")
+            # No explicit value means "equal to your walking speed" -- a
+            # common 5e phrasing for an innate climb/swim speed.
+            value = _value_of(m) or speeds.get("walk", 30)
+            speeds[key] = max(speeds.get(key, 0), value)
+
     return {k: v for k, v in speeds.items() if v}
 
 
