@@ -525,8 +525,8 @@ def parse_character(data: dict) -> Character:
         attacks=_parse_attacks(data, abilities, mods, prof),
         inventory=_parse_inventory(data),
         spells=_parse_spells(data),
-        spell_slots=_parse_slots(data.get("spellSlots")),
-        pact_slots=_parse_pact(data.get("pactMagic")),
+        spell_slots=_parse_slots(data.get("spellSlots")) or _compute_spell_slots(classes),
+        pact_slots=_parse_pact(data.get("pactMagic")) or _compute_pact_slots(classes),
         feats=_parse_feats(data),
         conditions=[(c.get("definition") or {}).get("name") or f"condition {c.get('id')}"
                     for c in (data.get("conditions") or [])],
@@ -987,14 +987,132 @@ def _parse_spells(data: dict) -> List[Spell]:
 
 
 def _parse_slots(slots) -> Dict[int, int]:
-    return {s.get("level"): s.get("available", 0)
-            for s in (slots or []) if s.get("available")}
+    # "available" is how many of this level's slots are *currently* unspent,
+    # not the character's total -- a snapshot taken mid-adventure with slots
+    # already spent would otherwise under-report (or drop entirely) levels
+    # that have been used. Total capacity is available + used, same idea as
+    # max HP being current + removed.
+    out = {}
+    for s in slots or []:
+        total = (s.get("available") or 0) + (s.get("used") or 0)
+        if total:
+            out[s.get("level")] = total
+    return out
 
 
 def _parse_pact(pact) -> Dict[str, int]:
     for p in pact or []:
-        if p.get("available"):
-            return {"level": p.get("level"), "slots": p.get("available")}
+        total = (p.get("available") or 0) + (p.get("used") or 0)
+        if total:
+            return {"level": p.get("level"), "slots": total}
+    return {}
+
+
+# --------------------------------------------------------------------------
+# Spell slot tables (SRD-standard). D&D Beyond's `spellSlots`/`pactMagic`
+# fields turn out to read all-zero for at least some real characters (a
+# level 4 Sorcerer, confirmed) even though they very much have slots -- that
+# field tracks something other than total capacity. Total slots are a pure
+# function of class level, so compute them from the standard tables and
+# only fall back to whatever the API reported if a class can't be matched.
+# --------------------------------------------------------------------------
+
+_FULL_CASTER_SLOTS = {
+    1: [2, 0, 0, 0, 0, 0, 0, 0, 0], 2: [3, 0, 0, 0, 0, 0, 0, 0, 0],
+    3: [4, 2, 0, 0, 0, 0, 0, 0, 0], 4: [4, 3, 0, 0, 0, 0, 0, 0, 0],
+    5: [4, 3, 2, 0, 0, 0, 0, 0, 0], 6: [4, 3, 3, 0, 0, 0, 0, 0, 0],
+    7: [4, 3, 3, 1, 0, 0, 0, 0, 0], 8: [4, 3, 3, 2, 0, 0, 0, 0, 0],
+    9: [4, 3, 3, 3, 1, 0, 0, 0, 0], 10: [4, 3, 3, 3, 2, 0, 0, 0, 0],
+    11: [4, 3, 3, 3, 2, 1, 0, 0, 0], 12: [4, 3, 3, 3, 2, 1, 0, 0, 0],
+    13: [4, 3, 3, 3, 2, 1, 1, 0, 0], 14: [4, 3, 3, 3, 2, 1, 1, 0, 0],
+    15: [4, 3, 3, 3, 2, 1, 1, 1, 0], 16: [4, 3, 3, 3, 2, 1, 1, 1, 0],
+    17: [4, 3, 3, 3, 2, 1, 1, 1, 1], 18: [4, 3, 3, 3, 3, 1, 1, 1, 1],
+    19: [4, 3, 3, 3, 3, 2, 1, 1, 1], 20: [4, 3, 3, 3, 3, 2, 2, 1, 1],
+}
+_HALF_CASTER_SLOTS = {  # Paladin, Ranger -- 1st-5th level spells only
+    1: [0, 0, 0, 0, 0], 2: [2, 0, 0, 0, 0], 3: [3, 0, 0, 0, 0], 4: [3, 0, 0, 0, 0],
+    5: [4, 2, 0, 0, 0], 6: [4, 2, 0, 0, 0], 7: [4, 3, 0, 0, 0], 8: [4, 3, 0, 0, 0],
+    9: [4, 3, 2, 0, 0], 10: [4, 3, 2, 0, 0], 11: [4, 3, 3, 0, 0], 12: [4, 3, 3, 0, 0],
+    13: [4, 3, 3, 1, 0], 14: [4, 3, 3, 1, 0], 15: [4, 3, 3, 2, 0], 16: [4, 3, 3, 2, 0],
+    17: [4, 3, 3, 3, 1], 18: [4, 3, 3, 3, 1], 19: [4, 3, 3, 3, 2], 20: [4, 3, 3, 3, 2],
+}
+_ARTIFICER_SLOTS = {  # rounds up instead of down, gets slots starting level 1
+    1: [2, 0, 0, 0, 0], 2: [2, 0, 0, 0, 0], 3: [3, 0, 0, 0, 0], 4: [3, 0, 0, 0, 0],
+    5: [4, 2, 0, 0, 0], 6: [4, 2, 0, 0, 0], 7: [4, 3, 0, 0, 0], 8: [4, 3, 0, 0, 0],
+    9: [4, 3, 2, 0, 0], 10: [4, 3, 2, 0, 0], 11: [4, 3, 3, 0, 0], 12: [4, 3, 3, 0, 0],
+    13: [4, 3, 3, 1, 0], 14: [4, 3, 3, 1, 0], 15: [4, 3, 3, 2, 0], 16: [4, 3, 3, 2, 0],
+    17: [4, 3, 3, 3, 1], 18: [4, 3, 3, 3, 1], 19: [4, 3, 3, 3, 2], 20: [4, 3, 3, 3, 2],
+}
+_THIRD_CASTER_SLOTS = {  # Eldritch Knight, Arcane Trickster -- 1st-4th only
+    1: [0, 0, 0, 0], 2: [0, 0, 0, 0], 3: [2, 0, 0, 0], 4: [3, 0, 0, 0],
+    5: [3, 0, 0, 0], 6: [3, 0, 0, 0], 7: [4, 2, 0, 0], 8: [4, 2, 0, 0],
+    9: [4, 2, 0, 0], 10: [4, 3, 0, 0], 11: [4, 3, 0, 0], 12: [4, 3, 0, 0],
+    13: [4, 3, 2, 0], 14: [4, 3, 2, 0], 15: [4, 3, 2, 0], 16: [4, 3, 3, 0],
+    17: [4, 3, 3, 0], 18: [4, 3, 3, 0], 19: [4, 3, 3, 1], 20: [4, 3, 3, 1],
+}
+_PACT_MAGIC_TABLE = {  # Warlock: (slot count, slot level) by warlock level
+    1: (1, 1), 2: (2, 1), 3: (2, 2), 4: (2, 2), 5: (2, 3), 6: (2, 3),
+    7: (2, 4), 8: (2, 4), 9: (2, 5), 10: (2, 5), 11: (3, 5), 12: (3, 5),
+    13: (3, 5), 14: (3, 5), 15: (3, 5), 16: (3, 5), 17: (4, 5), 18: (4, 5),
+    19: (4, 5), 20: (4, 5),
+}
+_FULL_CASTER_CLASSES = {"bard", "cleric", "druid", "sorcerer", "wizard"}
+_HALF_CASTER_CLASSES = {"paladin", "ranger"}
+_THIRD_CASTER_SUBCLASSES = {"eldritch knight", "arcane trickster"}
+
+
+def _classify_casters(classes) -> List[Tuple[str, int]]:
+    """(caster kind, level) for each class that draws on the shared slot
+    pool. Warlock is excluded -- Pact Magic is a separate resource."""
+    out = []
+    for cl in classes:
+        name = cl.name.lower()
+        sub = (cl.subclass or "").lower()
+        if name in _FULL_CASTER_CLASSES:
+            out.append(("full", cl.level))
+        elif name == "artificer":
+            out.append(("artificer", cl.level))
+        elif name in _HALF_CASTER_CLASSES:
+            out.append(("half", cl.level))
+        elif sub in _THIRD_CASTER_SUBCLASSES:
+            out.append(("third", cl.level))
+    return out
+
+
+def _compute_spell_slots(classes) -> Dict[int, int]:
+    casters = _classify_casters(classes)
+    if not casters:
+        return {}
+
+    if len(casters) == 1:
+        kind, level = casters[0]
+        table = {"full": _FULL_CASTER_SLOTS, "half": _HALF_CASTER_SLOTS,
+                 "artificer": _ARTIFICER_SLOTS, "third": _THIRD_CASTER_SLOTS}[kind]
+        row = table[min(max(level, 1), 20)]
+    else:
+        # Multiclass spellcasting: combine into one caster level using the
+        # PHB's fractional rule, then draw from the shared full-caster table.
+        equiv = 0.0
+        for kind, level in casters:
+            if kind == "full":
+                equiv += level
+            elif kind == "half":
+                equiv += level // 2
+            elif kind == "artificer":
+                equiv += math.ceil(level / 2)
+            elif kind == "third":
+                equiv += level // 3
+        equiv = min(int(equiv), 20)
+        row = _FULL_CASTER_SLOTS[equiv] if equiv > 0 else [0] * 9
+
+    return {lvl: n for lvl, n in enumerate(row, start=1) if n}
+
+
+def _compute_pact_slots(classes) -> Dict[str, int]:
+    for cl in classes:
+        if cl.name.lower() == "warlock":
+            slots, slot_level = _PACT_MAGIC_TABLE[min(max(cl.level, 1), 20)]
+            return {"level": slot_level, "slots": slots}
     return {}
 
 
