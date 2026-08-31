@@ -680,19 +680,7 @@ def _build_ability_columns(b: SheetBuilder, c: Character) -> None:
     b.y = max_bottom + 6
 
 
-def _build_passives_and_profs(b: SheetBuilder, c: Character) -> None:
-    b.section("Passive Scores & Senses")
-    b.line(
-        f"Passive Perception {c.passive_perception}    "
-        f"Passive Investigation {c.passive_investigation}    "
-        f"Passive Insight {c.passive_insight}",
-        font="F2",
-        size=9.5,
-    )
-    if c.senses:
-        b.line("Senses: " + ", ".join(f"{titleize(k)} {v} ft." for k, v in c.senses.items()))
-    b.gap(4)
-
+def _build_other_proficiencies(b: SheetBuilder, c: Character) -> None:
     b.section("Other Proficiencies & Languages")
     for label, vals in (
         ("Armor", c.armor_proficiencies),
@@ -749,41 +737,82 @@ def _build_combat(b: SheetBuilder, c: Character) -> None:
     b.y = y + h + 8
     b.line(f"AC source: {c.armor_class_source}", size=7.5, gray=0.4, dy=12)
 
-    hit_dice_desc = ", ".join(f"{n}{die}" for die, n in c.hit_dice.items())
-    b.line(f"Hit Dice: {hit_dice_desc}", font="F2", size=9, dy=14)
-
-    # One checkbox per total Hit Die, so the player can track dice spent
-    # rather than a blank space that has to be kept up to date by hand.
-    total_dice = sum(c.hit_dice.values())
-    if total_dice:
-        dbox, dgap = 8.0, 5.0
-        per_row = max(1, int(CONTENT_W // (dbox + dgap)))
-        rows_needed = -(-total_dice // per_row)
-        b.ensure(rows_needed * (dbox + dgap) + 4)
-        y = b.y
-        x = MARGIN
-        for i in range(total_dice):
-            if i and i % per_row == 0:
-                x = MARGIN
-                y += dbox + dgap
-            b.cv.rect(x, y, dbox, dbox)
-            x += dbox + dgap
-        b.y = y + dbox + dgap
-
-    b.paragraph(
-        "Short Rest: spend any of the Hit Dice above; for each one spent, roll it and "
-        "add your Constitution modifier to regain that many hit points. "
-        "Long Rest: regain all lost hit points, and regain a number of spent Hit Dice "
-        "equal to half your total (minimum one).",
-        size=7,
-        gray=0.4,
-        leading=9,
-    )
-    b.gap(2)
-
     if c.conditions:
         b.line("Conditions: " + ", ".join(c.conditions), size=8.5)
     b.gap(4)
+
+
+_REST_RULES_TEXT = (
+    "Short Rest: spend any of the Hit Dice above; for each one spent, roll it and "
+    "add your Constitution modifier to regain that many hit points. "
+    "Long Rest: regain all lost hit points, and regain a number of spent Hit Dice "
+    "equal to half your total (minimum one)."
+)
+
+
+def _build_hitdice_and_passives(b: SheetBuilder, c: Character) -> None:
+    """Hit Dice (with its short/long rest explanation) and Passive Scores &
+    Senses, side by side -- each half the page. The rest explanation stays
+    with Hit Dice, not off under the other column."""
+    col_gap = 16.0
+    col_w = (CONTENT_W - col_gap) / 2
+    passives_x = MARGIN
+    hitdice_x = MARGIN + col_w + col_gap
+
+    hit_dice_desc = ", ".join(f"{n}{die}" for die, n in c.hit_dice.items())
+    total_dice = sum(c.hit_dice.values())
+    dbox, dgap = 8.0, 5.0
+    per_row = max(1, int(col_w // (dbox + dgap)))
+    dice_rows = -(-total_dice // per_row) if total_dice else 0
+    rest_lines = wrap(_REST_RULES_TEXT, "F1", 7, col_w)
+
+    senses_line = None
+    if c.senses:
+        senses_line = "Senses: " + ", ".join(f"{titleize(k)} {v} ft." for k, v in c.senses.items())
+    senses_lines = wrap(senses_line, "F1", 8.5, col_w) if senses_line else []
+
+    left_h = 20 + 14 + (dice_rows * (dbox + dgap) + 4 if total_dice else 0) + len(rest_lines) * 9
+    right_h = 20 + 14 + len(senses_lines) * 11
+
+    b.ensure(max(left_h, right_h) + 8)
+    y0 = b.y
+
+    # Right column: Hit Dice.
+    y = y0
+    b.cv.text(hitdice_x, y + 9, "HIT DICE", font="F2", size=10)
+    b.cv.hline(hitdice_x, y + 13, hitdice_x + col_w, gray=0.6)
+    y += 20
+    b.cv.text(hitdice_x, y + 9, f"Hit Dice: {hit_dice_desc}", font="F2", size=9)
+    y += 14
+    if total_dice:
+        x = hitdice_x
+        for i in range(total_dice):
+            if i and i % per_row == 0:
+                x = hitdice_x
+                y += dbox + dgap
+            b.cv.rect(x, y, dbox, dbox)
+            x += dbox + dgap
+        y += dbox + dgap + 4
+    for ln in rest_lines:
+        b.cv.text(hitdice_x, y + 6, ln, font="F1", size=7, gray=0.4)
+        y += 9
+    hitdice_bottom = y
+
+    # Left column: Passive Scores & Senses.
+    y = y0
+    b.cv.text(passives_x, y + 9, "PASSIVE SCORES & SENSES", font="F2", size=10)
+    b.cv.hline(passives_x, y + 13, passives_x + col_w, gray=0.6)
+    y += 20
+    b.cv.text(passives_x, y + 9,
+              f"Perception {c.passive_perception}   Investigation {c.passive_investigation}   "
+              f"Insight {c.passive_insight}", font="F2", size=9)
+    y += 14
+    for ln in senses_lines:
+        b.cv.text(passives_x, y + 8, ln, font="F1", size=8.5)
+        y += 11
+    passives_bottom = y
+
+    b.y = max(hitdice_bottom, passives_bottom) + 8
 
 
 def _cantrip_damage(s, char_level: int) -> str:
@@ -800,7 +829,7 @@ def _cantrip_damage(s, char_level: int) -> str:
 
 
 def _build_attacks(b: SheetBuilder, c: Character) -> None:
-    b.section("Attacks & Spellcasting")
+    b.section("Attacks and Cantrips")
     b.ensure(13)
     cols = [(MARGIN, "NAME"), (MARGIN + 200, "ATK BONUS"), (MARGIN + 270, "DAMAGE / TYPE"),
             (MARGIN + 400, "NOTES")]
@@ -1180,8 +1209,9 @@ def _spell_meta(s) -> str:
 
 
 def _build_spell_stats(b: SheetBuilder, c: Character) -> None:
-    """Spellcasting modifier, save DC, attack bonus, and slots — kept right
-    under Attacks & Spellcasting rather than off with the spell list."""
+    """Spellcasting modifier, save DC, attack bonus, and slots — kept
+    alongside the Traits & Feats summary rather than off with the spell
+    list."""
     casters = [cl for cl in c.classes if cl.spellcasting_ability]
     if not casters and not c.spell_slots and not c.pact_slots:
         return
@@ -1266,14 +1296,15 @@ def build_pdf(c: Character, *, include_magic_item_descriptions: bool = True,
     b = SheetBuilder()
     _build_header(b, c)
     _build_combat(b, c)
+    _build_hitdice_and_passives(b, c)
     _build_ability_columns(b, c)
-    _build_passives_and_profs(b, c)
+    _build_attacks(b, c)
 
     b.cv = b.doc.new_page()
     b.y = MARGIN
-    _build_attacks(b, c)
     _build_feature_summary(b, c)
     _build_spell_stats(b, c)
+    _build_other_proficiencies(b, c)
 
     b.cv = b.doc.new_page()
     b.y = MARGIN

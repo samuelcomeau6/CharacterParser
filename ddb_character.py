@@ -717,11 +717,15 @@ def _parse_speeds(data: dict, mods) -> Dict[str, int]:
     return {k: v for k, v in speeds.items() if v}
 
 
+_SENSE_TYPES = {"set", "set-base"}  # D&D Beyond uses "set-base" for a species's innate sense
+
+
 def _parse_senses(data: dict, mods) -> Dict[str, int]:
     senses: Dict[str, int] = {}
     for _, m in mods:
         st = m.get("subType") or ""
-        if m.get("type") == "set" and st in ("darkvision", "blindsight", "truesight", "tremorsense"):
+        if m.get("type") in _SENSE_TYPES and st in ("darkvision", "blindsight", "truesight",
+                                                      "tremorsense"):
             senses[st] = max(senses.get(st, 0), _value_of(m))
     for s in data.get("customSenses") or []:
         if s.get("distance"):
