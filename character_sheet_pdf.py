@@ -1031,6 +1031,64 @@ def _build_inventory(b: SheetBuilder, c: Character) -> None:
     b.gap(4)
 
 
+_ATTUNEMENT_MAX = 3  # the standard 5e limit; nothing in the source data ever raises it
+
+
+def _build_magical_items(b: SheetBuilder, c: Character) -> None:
+    magic_items = [i for i in c.inventory if i.magic]
+    if not magic_items:
+        return
+
+    b.section("Magical Items")
+
+    attuned_count = sum(1 for i in magic_items if i.requires_attunement and i.attuned)
+    b.ensure(16)
+    label = "Attunement Slots:"
+    b.cv.text(MARGIN, b.y + 9, label, font="F2", size=9)
+    x = MARGIN + text_width(label, "F2", 9) + 10
+    abox = 9.0
+    for i in range(_ATTUNEMENT_MAX):
+        b.cv.rect(x, b.y + 1, abox, abox)
+        if i < attuned_count:
+            b.cv.text(x + 1.5, b.y + abox - 1, "X", font="F2", size=8)
+        x += abox + 5
+    b.cv.text(x + 5, b.y + 9, "(3 max, per the standard rule)", font="F1", size=7, gray=0.4)
+    b.y += 18
+
+    for item in magic_items:
+        b.ensure(13)
+        name = f"{item.name} ({item.rarity})" if item.rarity else item.name
+        b.cv.text(MARGIN, b.y + 9, name, font="F1", size=8.5)
+        x = MARGIN + text_width(name, "F1", 8.5) + 12
+
+        if item.requires_attunement:
+            box = 8.0
+            b.cv.rect(x, b.y + 1, box, box)
+            if item.attuned:
+                b.cv.text(x + 1.2, b.y + box - 1, "X", font="F2", size=7)
+            b.cv.text(x + box + 3, b.y + 9, "attuned", font="F1", size=7, gray=0.4)
+            x += box + 3 + text_width("attuned", "F1", 7) + 12
+
+        if item.max_charges:
+            tag = "Charges:"
+            b.cv.text(x, b.y + 9, tag, font="F1", size=7, gray=0.4)
+            x += text_width(tag, "F1", 7) + 4
+            cbox, cgap = 6.0, 3.0
+            for _ in range(item.max_charges):
+                b.cv.rect(x, b.y + 2.5, cbox, cbox)
+                x += cbox + cgap
+        b.y += 13
+    b.gap(4)
+
+
+def _build_magical_item_descriptions(b: SheetBuilder, c: Character) -> None:
+    magic_items = [i for i in c.inventory if i.magic]
+    if not magic_items:
+        return
+    b.section("Magical Item Descriptions")
+    _build_feat_list(b, magic_items)  # same name/description layout as feats
+
+
 def _build_feat_list(b: SheetBuilder, feats: List) -> None:
     for feat in feats:
         b.ensure(11)
@@ -1218,6 +1276,7 @@ def build_pdf(c: Character) -> PDFDocument:
     b.cv = b.doc.new_page()
     b.y = MARGIN
     _build_inventory(b, c)
+    _build_magical_items(b, c)
     _build_currency(b, c)
 
     b.cv = b.doc.new_page()
@@ -1226,6 +1285,7 @@ def build_pdf(c: Character) -> PDFDocument:
 
     b.cv = b.doc.new_page()
     b.y = MARGIN
+    _build_magical_item_descriptions(b, c)
     _build_features(b, c)
     _build_spells(b, c)
 

@@ -1,6 +1,4 @@
 - Other proficiencies and languages should be located near the end of the character sheet, above Features and traits
-- There needs to be a magical items section that lists all items that have magical properties and shows attunement slots. Magical items that have charges should have checkboxes.
-- There needs to be a section that give the description of any magical items.
 - Saves and skills should have a right justified (P) after the modifier if the character has proficiency or an (E) if they have expertise.
 - The inventory should have its own dedicated page.
 - Animal Handling is weirdly abbreviated.

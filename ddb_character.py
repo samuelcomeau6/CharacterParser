@@ -336,6 +336,9 @@ class Item:
     magic: bool
     cost: Optional[float] = None
     base_name: Optional[str] = None  # the item's un-renamed name, if the player renamed it
+    requires_attunement: bool = False
+    description: Optional[str] = None
+    max_charges: Optional[int] = None  # None unless it's a genuine multi-charge item
 
 
 @dataclass
@@ -870,6 +873,15 @@ def _parse_inventory(data: dict) -> List[Item]:
         d = item.get("definition") or {}
         base_name = d.get("name") or "?"
         custom_name = custom_names.get(str(item.get("id")))
+
+        # A "charge" item is a rechargeable magic item (a wand, staff, ...)
+        # tracked via limitedUse.maxUses > 1 -- a single-use consumable
+        # (potion, scroll) also carries a limitedUse block but with
+        # maxUses == 1 and resetType "Consumable", which isn't a charge
+        # pool worth drawing checkboxes for.
+        max_uses = (item.get("limitedUse") or {}).get("maxUses")
+        max_charges = max_uses if (max_uses or 0) > 1 else None
+
         out.append(Item(
             name=custom_name or base_name,
             quantity=item.get("quantity") or 1,
@@ -881,6 +893,9 @@ def _parse_inventory(data: dict) -> List[Item]:
             magic=bool(d.get("magic")),
             cost=d.get("cost"),
             base_name=base_name if custom_name else None,
+            requires_attunement=bool(d.get("canAttune")),
+            description=d.get("description"),
+            max_charges=max_charges,
         ))
     return out
 
