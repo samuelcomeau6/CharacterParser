@@ -41,7 +41,7 @@ import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 __all__ = [
     "Character",
@@ -1898,15 +1898,19 @@ def _check_filter_arg_conflicts(ap: argparse.ArgumentParser, args: argparse.Name
 
 
 _FILTER_MENU = (
-    "  [1] No filter (default)\n"
-    "  [2] Exclude from all\n"
-    "  [3] Exclude from summary\n"
-    "  [4] Exclude from description"
+    "  1 = Exclude from all\n"
+    "  2 = Exclude from summary\n"
+    "  3 = Exclude from description"
 )
-_FILTER_MENU_CHOICES = {"": None, "1": None, "2": "list", "3": "summary", "4": "description"}
+_FILTER_TOKEN_CATEGORY = {"1": "list", "2": "summary", "3": "description"}
 
 
-def _prompt_filter_choice(label: str, name: str, description: Optional[str]) -> Optional[str]:
+def _prompt_filter_choice(label: str, name: str, description: Optional[str]) -> Set[str]:
+    """Ask which (zero or more) of the three filter categories this entity
+    belongs in. They aren't mutually exclusive: e.g. hidden from the
+    summary AND stripped of its description, but still listed by name in
+    Features & Traits, is a real combination distinct from "exclude from
+    all" -- so this takes a comma-separated set of choices, not just one."""
     from character_sheet_pdf import html_to_text  # lazy: avoid a hard/circular import at load time
     text = html_to_text(description) if description else "(no description)"
 
@@ -1915,19 +1919,24 @@ def _prompt_filter_choice(label: str, name: str, description: Optional[str]) -> 
     print("-" * 70)
     print(text)
     print("-" * 70)
+    print("Select any that apply, comma-separated (blank for no filter):")
     print(_FILTER_MENU)
     while True:
-        choice = input("Choice [1-4]: ").strip()
-        if choice in _FILTER_MENU_CHOICES:
-            return _FILTER_MENU_CHOICES[choice]
-        print("Please enter 1, 2, 3, or 4.")
+        raw = input("Choice: ").strip()
+        if not raw:
+            return set()
+        tokens = [t.strip() for t in raw.split(",") if t.strip()]
+        if tokens and all(t in _FILTER_TOKEN_CATEGORY for t in tokens):
+            return {_FILTER_TOKEN_CATEGORY[t] for t in tokens}
+        print("Please enter one or more of 1, 2, 3 separated by commas (or leave blank).")
 
 
 def build_filter_file_interactive(c: Character) -> None:
     """Interactively ask, for every feat/class feature/species trait/spell
-    on `c` (deduplicated by name), which one of the three filter
-    categories it belongs in -- or none, the default -- then write the
-    result out as a filter file for --filter-file to load later."""
+    on `c` (deduplicated by name), which (zero or more, they're not
+    mutually exclusive) of the three filter categories it belongs in --
+    none is the default -- then write the result out as a filter file for
+    --filter-file to load later."""
     entities: List[Tuple[str, str, Optional[str]]] = []
     seen = set()
 
@@ -1955,12 +1964,12 @@ def build_filter_file_interactive(c: Character) -> None:
     filter_summary: set = set()
     filter_description: set = set()
     for label, name, description in entities:
-        choice = _prompt_filter_choice(label, name, description)
-        if choice == "list":
+        choices = _prompt_filter_choice(label, name, description)
+        if "list" in choices:
             filter_list.add(name)
-        elif choice == "summary":
+        if "summary" in choices:
             filter_summary.add(name)
-        elif choice == "description":
+        if "description" in choices:
             filter_description.add(name)
 
     payload = {
