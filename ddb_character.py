@@ -32,6 +32,7 @@ Stdlib only — no third-party dependencies.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import json
 import math
@@ -1931,6 +1932,27 @@ def _prompt_filter_choice(label: str, name: str, description: Optional[str]) -> 
         print("Please enter one or more of 1, 2, 3 separated by commas (or leave blank).")
 
 
+@contextlib.contextmanager
+def _filter_list_disabled():
+    """Temporarily clear FILTER_LIST/FILTER_LIST_PATTERNS so parsing keeps
+    every feat/class feature/species trait/spell, including ones the
+    built-in defaults normally drop entirely (e.g. "Weapon Mastery",
+    "Dark Bargain", "Runestones") -- used while building a filter file
+    interactively. Otherwise those entities never reach the entity list
+    to be reviewed, and the filter file this produces (which replaces
+    FILTER_LIST wholesale -- there's no "add" variant) would silently
+    un-filter them the moment it's used."""
+    global FILTER_LIST, FILTER_LIST_PATTERNS
+    saved = (FILTER_LIST, FILTER_LIST_PATTERNS)
+    FILTER_LIST, FILTER_LIST_PATTERNS = set(), []
+    _sync_filters_to_library_module()
+    try:
+        yield
+    finally:
+        FILTER_LIST, FILTER_LIST_PATTERNS = saved
+        _sync_filters_to_library_module()
+
+
 def build_filter_file_interactive(c: Character) -> None:
     """Interactively ask, for every feat/class feature/species trait/spell
     on `c` (deduplicated by name), which (zero or more, they're not
@@ -2041,16 +2063,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         _apply_filter_args(args)
 
     try:
-        if os.path.exists(args.character):
-            char = load_character(args.character)
-        else:
-            data = fetch_character_json(args.character, cobalt_session=args.cobalt,
-                                        timeout=args.timeout)
-            if args.raw:
-                with open(args.raw, "w", encoding="utf-8") as fh:
-                    json.dump(data, fh, indent=2)
-                print(f"raw JSON written to {args.raw}", file=sys.stderr)
-            char = parse_character(data)
+        # Building a filter file needs every entity on the table, including
+        # ones FILTER_LIST would otherwise drop before parse_character()
+        # ever returns them -- see _filter_list_disabled.
+        with _filter_list_disabled() if args.build_filter_file else contextlib.nullcontext():
+            if os.path.exists(args.character):
+                char = load_character(args.character)
+            else:
+                data = fetch_character_json(args.character, cobalt_session=args.cobalt,
+                                            timeout=args.timeout)
+                if args.raw:
+                    with open(args.raw, "w", encoding="utf-8") as fh:
+                        json.dump(data, fh, indent=2)
+                    print(f"raw JSON written to {args.raw}", file=sys.stderr)
+                char = parse_character(data)
     except (DDBError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
