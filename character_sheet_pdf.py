@@ -866,20 +866,23 @@ def _cantrip_damage(s, char_level: int) -> str:
 # body text at the row size below) rather than bare points, and confined
 # to the left half of the page. ATK keeps a fixed 6-character minimum
 # (it must still fit e.g. "CON 14"); NAME and DMG get reasonable caps,
-# and NOTES takes whatever's left of the half-width.
+# and NOTES takes whatever's left of the half-width, plus a bit extra
+# since the page's right half is otherwise blank so minor overflow there
+# is harmless and keeps NOTES text more legibly complete.
 _ATTACK_ROW_SIZE = 8.5
 _ATTACK_CHAR_W = text_width("0", "F1", _ATTACK_ROW_SIZE)
 _ATTACK_TABLE_W = CONTENT_W / 2
-_ATTACK_NAME_MAXCHARS = 16
+_ATTACK_NAME_MAXCHARS = 19
 _ATTACK_ATKB_MAXCHARS = 6
 _ATTACK_DAMAGE_MAXCHARS = 12
+_ATTACK_NOTES_EXTRA_CHARS = 10
 _ATTACK_NAME_W = _ATTACK_NAME_MAXCHARS * _ATTACK_CHAR_W
 _ATTACK_ATKB_W = _ATTACK_ATKB_MAXCHARS * _ATTACK_CHAR_W
 _ATTACK_DMG_GAP_W = 2 * _ATTACK_CHAR_W  # extra breathing room between ATK and DMG
 _ATTACK_DAMAGE_W = _ATTACK_DAMAGE_MAXCHARS * _ATTACK_CHAR_W
 _ATTACK_NOTES_W = _ATTACK_TABLE_W - (_ATTACK_NAME_W + _ATTACK_ATKB_W + _ATTACK_DMG_GAP_W
                                       + _ATTACK_DAMAGE_W)
-_ATTACK_NOTES_MAXCHARS = int(_ATTACK_NOTES_W // _ATTACK_CHAR_W)
+_ATTACK_NOTES_MAXCHARS = int(_ATTACK_NOTES_W // _ATTACK_CHAR_W) + _ATTACK_NOTES_EXTRA_CHARS
 _ATTACK_COL_NAME = MARGIN
 _ATTACK_COL_ATKB = _ATTACK_COL_NAME + _ATTACK_NAME_W
 _ATTACK_COL_DMG = _ATTACK_COL_ATKB + _ATTACK_ATKB_W + _ATTACK_DMG_GAP_W
@@ -891,7 +894,7 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
     # Not b.section(), which underlines the full page width -- this table
     # only occupies the left half, so its header rule should match.
     b.ensure(24)
-    b.cv.text(MARGIN, b.y + 9, "ATTACKS AND CANTRIPS", font="F2", size=10)
+    b.cv.text(MARGIN, b.y + 9, "ATTACKS & CANTRIPS", font="F2", size=10)
     b.cv.hline(MARGIN, b.y + 13, _ATTACK_TABLE_RIGHT, gray=0.6)
     b.y += 20
 
@@ -913,10 +916,13 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
         b.cv.text(_ATTACK_COL_DMG, b.y + 9, dmg[:_ATTACK_DAMAGE_MAXCHARS], font="F1", size=8.5)
         # The weapon's own formal properties (Light, Heavy, Thrown, ...)
         # already include any known mastery (e.g. Cleave, Vex) -- no need
-        # to separately spell out which ability it uses. Range/reach leads
-        # the list (not just appended) so it survives truncation in this
+        # to separately spell out which ability it uses. Range leads the
+        # list (not just appended) so it survives truncation in this
         # half-width column even when a weapon has several properties.
-        notes_parts = [a.range] if a.range else []
+        # Plain "5 ft. reach" is every melee weapon's boilerplate default
+        # and isn't worth the space -- an actual Reach weapon's longer
+        # distance still gets shown.
+        notes_parts = [a.range] if a.range and a.range != "5 ft. reach" else []
         notes_parts += a.properties
         props_text = ", ".join(notes_parts)
         b.cv.text(_ATTACK_COL_NOTES, b.y + 9, props_text[:_ATTACK_NOTES_MAXCHARS],
