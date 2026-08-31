@@ -335,6 +335,7 @@ class Item:
     rarity: Optional[str]
     magic: bool
     cost: Optional[float] = None
+    base_name: Optional[str] = None  # the item's un-renamed name, if the player renamed it
 
 
 @dataclass
@@ -366,6 +367,8 @@ class Spell:
     damage_type: Optional[str] = None
     damage_base_dice: Optional[str] = None
     damage_scaling: List[Tuple[int, str]] = field(default_factory=list)
+    check_type: Optional[str] = None  # "attack", "save", or None if neither
+    save_ability: Optional[str] = None  # lowercase ability name, when check_type == "save"
 
 
 @dataclass
@@ -418,6 +421,8 @@ class Character:
     spell_slots: Dict[int, int]
     pact_slots: Dict[str, int]
     feats: List[Feat]
+    class_features: List[Feat]
+    species_traits: List[Feat]
     conditions: List[str]
     currencies: Dict[str, int]
 
@@ -528,6 +533,8 @@ def parse_character(data: dict) -> Character:
         spell_slots=_parse_slots(data.get("spellSlots")) or _compute_spell_slots(classes),
         pact_slots=_parse_pact(data.get("pactMagic")) or _compute_pact_slots(classes),
         feats=_parse_feats(data),
+        class_features=_parse_class_features(data),
+        species_traits=_parse_species_traits(data),
         conditions=[(c.get("definition") or {}).get("name") or f"condition {c.get('id')}"
                     for c in (data.get("conditions") or [])],
         currencies={k: v for k, v in (data.get("currencies") or {}).items() if v},
@@ -803,12 +810,28 @@ def _parse_attacks(data: dict, abilities, mods, prof: int) -> List[Attack]:
     return attacks
 
 
+# characterValues typeId 8 is a player-given custom name for an inventory
+# item (e.g. renaming an unidentified item), keyed by the item's id.
+_CUSTOM_NAME_TYPE_ID = 8
+
+
+def _custom_item_names(data: dict) -> Dict[str, str]:
+    return {
+        str(cv.get("valueId")): cv.get("value")
+        for cv in data.get("characterValues") or []
+        if cv.get("typeId") == _CUSTOM_NAME_TYPE_ID and cv.get("value")
+    }
+
+
 def _parse_inventory(data: dict) -> List[Item]:
+    custom_names = _custom_item_names(data)
     out = []
     for item in data.get("inventory") or []:
         d = item.get("definition") or {}
+        base_name = d.get("name") or "?"
+        custom_name = custom_names.get(str(item.get("id")))
         out.append(Item(
-            name=d.get("name") or "?",
+            name=custom_name or base_name,
             quantity=item.get("quantity") or 1,
             equipped=bool(item.get("equipped")),
             attuned=bool(item.get("isAttuned")),
@@ -817,6 +840,7 @@ def _parse_inventory(data: dict) -> List[Item]:
             rarity=d.get("rarity"),
             magic=bool(d.get("magic")),
             cost=d.get("cost"),
+            base_name=base_name if custom_name else None,
         ))
     return out
 
@@ -896,6 +920,25 @@ _SCALING_RE = re.compile(
 )
 
 
+_SPELL_ATTACK_RE = re.compile(r"(?:ranged|melee)\s+spell\s+attack", re.IGNORECASE)
+_SAVING_THROW_RE = re.compile(
+    r"\b(" + "|".join(ABILITIES) + r")\s+saving throw", re.IGNORECASE,
+)
+
+
+def _spell_check_type(text: str) -> Tuple[Optional[str], Optional[str]]:
+    """Whether a spell calls for an attack roll or a saving throw, read
+    straight out of its rules text -- ("attack", None), ("save", ability),
+    or (None, None) for spells that do neither (Guidance, Message, ...)."""
+    text = text or ""
+    if _SPELL_ATTACK_RE.search(text):
+        return "attack", None
+    m = _SAVING_THROW_RE.search(text)
+    if m:
+        return "save", m.group(1).lower()
+    return None, None
+
+
 def _spell_damage(d: dict, text: str) -> Tuple[Optional[str], Optional[str], List[Tuple[int, str]]]:
     """Best-effort damage type/dice for a cantrip.
 
@@ -953,6 +996,7 @@ def _parse_spells(data: dict) -> List[Spell]:
         seen.add(key)
         description = d.get("description")
         dtype, base_dice, scaling = _spell_damage(d, description or "")
+        check_type, save_ability = _spell_check_type(description or "")
         out.append(Spell(
             name=name,
             level=d.get("level", 0) or 0,
@@ -969,6 +1013,8 @@ def _parse_spells(data: dict) -> List[Spell]:
             damage_type=dtype,
             damage_base_dice=base_dice,
             damage_scaling=scaling,
+            check_type=check_type,
+            save_ability=save_ability,
         ))
 
     for bucket, entries in (data.get("spells") or {}).items():
@@ -1128,6 +1174,41 @@ def _parse_feats(data: dict) -> List[Feat]:
         name = d.get("name")
         if not name or name in _IGNORED_FEATS:
             continue
+        out.append(Feat(name=name, description=d.get("description") or d.get("snippet")))
+    return out
+
+
+def _parse_class_features(data: dict) -> List[Feat]:
+    """Class features the character actually has at their current level.
+
+    Each class carries its *entire* feature list (all 20 levels' worth) in
+    `classFeatures`, gated by `definition.requiredLevel` -- filter to the
+    ones the class's current level has reached.
+    """
+    out = []
+    seen = set()
+    for cls in data.get("classes") or []:
+        level = cls.get("level") or 0
+        for f in cls.get("classFeatures") or []:
+            d = f.get("definition") or {}
+            name = d.get("name")
+            required = d.get("requiredLevel") or 1
+            if not name or required > level or name in seen:
+                continue
+            seen.add(name)
+            out.append(Feat(name=name, description=d.get("description") or d.get("snippet")))
+    return out
+
+
+def _parse_species_traits(data: dict) -> List[Feat]:
+    out = []
+    seen = set()
+    for t in (data.get("race") or {}).get("racialTraits") or []:
+        d = t.get("definition") or {}
+        name = d.get("name")
+        if not name or name in seen:
+            continue
+        seen.add(name)
         out.append(Feat(name=name, description=d.get("description") or d.get("snippet")))
     return out
 

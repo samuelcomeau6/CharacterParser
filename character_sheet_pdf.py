@@ -633,17 +633,29 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
     cantrips = sorted((s for s in c.spells if s.level == 0), key=lambda s: s.name)
     if cantrips:
         caster = next((cl for cl in c.classes if cl.spellcasting_ability), None)
-        atk_text, dc_note = "—", ""
+        atk_bonus_text, dc = "—", None
         if caster:
             ab = c.abilities[caster.spellcasting_ability]
-            atk_text = fmt(c.proficiency_bonus + ab.modifier)
-            dc_note = f"Save DC {8 + c.proficiency_bonus + ab.modifier}"
+            atk_bonus_text = fmt(c.proficiency_bonus + ab.modifier)
+            dc = 8 + c.proficiency_bonus + ab.modifier
         for s in cantrips:
             b.ensure(13)
             b.cv.text(MARGIN, b.y + 9, s.name, font="F1", size=8.5)
-            b.cv.text(MARGIN + 200, b.y + 9, atk_text, font="F1", size=8.5)
+
+            # This slot holds an attack bonus for attack-roll cantrips, or
+            # the save DC and the ability the target rolls for save-based
+            # ones (e.g. Frostbite -> "CON 14") -- whichever the cantrip's
+            # own rules text calls for.
+            if s.check_type == "save" and dc is not None:
+                check_text = f"{ABBREV[s.save_ability]} {dc}"
+            elif s.check_type == "attack":
+                check_text = atk_bonus_text
+            else:
+                check_text = "—"
+            b.cv.text(MARGIN + 200, b.y + 9, check_text, font="F1", size=8.5)
+
             b.cv.text(MARGIN + 270, b.y + 9, _cantrip_damage(s, c.level), font="F1", size=8.5)
-            b.cv.text(MARGIN + 400, b.y + 9, dc_note, font="F1", size=7.5, gray=0.4)
+            b.cv.text(MARGIN + 400, b.y + 9, s.range_text or "", font="F1", size=7.5, gray=0.4)
             b.y += 13
 
     # Room to pencil in additional attacks.
@@ -692,13 +704,18 @@ def _build_inventory(b: SheetBuilder, c: Character) -> None:
     note_size, note_gray = 6.5, 0.45
 
     def note_of(item) -> str:
+        # Base (un-renamed) name first, then equip flags, then unit weight
+        # last -- all in the same smaller/lighter run that follows the name.
         bits = []
+        if item.base_name:
+            bits.append(item.base_name)
         if item.equipped:
             bits.append("equipped")
         if item.attuned:
             bits.append("attuned")
         if item.magic:
             bits.append("magic")
+        bits.append(f"{item.weight:g} lb")
         return ", ".join(bits)
 
     def row_height(item) -> float:
@@ -764,13 +781,8 @@ def _build_inventory(b: SheetBuilder, c: Character) -> None:
     b.gap(4)
 
 
-def _build_features(b: SheetBuilder, c: Character) -> None:
-    b.section("Features & Traits")
-    if not c.feats:
-        b.line("(none recorded)", size=8, gray=0.4)
-        b.gap(2)
-        return
-    for feat in c.feats:
+def _build_feat_list(b: SheetBuilder, feats: List) -> None:
+    for feat in feats:
         b.ensure(11)
         b.cv.text(MARGIN, b.y + 9, feat.name, font="F2", size=8.5)
         b.y += 12
@@ -780,6 +792,24 @@ def _build_features(b: SheetBuilder, c: Character) -> None:
         else:
             b.line("(no description in source data)", size=7, gray=0.45, dy=10)
         b.gap(3)
+
+
+def _build_features(b: SheetBuilder, c: Character) -> None:
+    b.section("Features & Traits")
+    groups = [
+        ("Species Traits", c.species_traits),
+        ("Class Features", c.class_features),
+        ("Feats", c.feats),
+    ]
+    if not any(items for _, items in groups):
+        b.line("(none recorded)", size=8, gray=0.4)
+        b.gap(2)
+        return
+    for label, items in groups:
+        if not items:
+            continue
+        b.line(label, font="F2", size=9, dy=13)
+        _build_feat_list(b, items)
 
 
 def _build_appearance_and_backstory(b: SheetBuilder, c: Character) -> None:
