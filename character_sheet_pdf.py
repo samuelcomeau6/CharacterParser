@@ -395,8 +395,17 @@ class SheetBuilder:
 
     def ensure(self, h: float) -> None:
         if self.y + h > BOTTOM:
-            self.cv = self.doc.new_page()
-            self.y = MARGIN
+            self.new_page()
+
+    def new_page(self) -> None:
+        self.cv = self.doc.new_page()
+        self.y = MARGIN
+
+    def in_bottom_third(self) -> bool:
+        """Whether the cursor already sits in the last third of the page's
+        usable height -- used to push a section that shouldn't start this
+        low (e.g. Equipment) onto a fresh page instead."""
+        return self.y >= MARGIN + (BOTTOM - MARGIN) * 2 / 3
 
     def gap(self, h: float = 8.0) -> None:
         self.y += h
@@ -1192,6 +1201,11 @@ def _split_large_groups(items: List) -> List:
 
 
 def _build_inventory(b: SheetBuilder, c: Character) -> None:
+    # Equipment can run long; don't let it start in the bottom third of a
+    # page only to spill onto the next one almost immediately -- push it
+    # onto a fresh page instead.
+    if b.in_bottom_third():
+        b.new_page()
     b.section("Equipment")
 
     col_gap = 16.0
@@ -1589,8 +1603,7 @@ def build_pdf(c: Character, *, include_magic_item_descriptions: bool = True,
     _build_magical_items(b, c)
     _build_currency(b, c)
 
-    b.cv = b.doc.new_page()
-    b.y = MARGIN
+    b.new_page()
     _build_appearance_and_backstory(b, c)
 
     # Skip the final page entirely if every description list on it has
