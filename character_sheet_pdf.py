@@ -1455,7 +1455,13 @@ def _build_appearance_and_backstory(b: SheetBuilder, c: Character) -> None:
     b.y = max(left_bottom, y0 + box_h) + 8
 
     b.section("Additional Notes / Backstory")
-    b.blank_lines(9)
+    # Fill the rest of the page with ruled lines rather than a fixed count,
+    # so this section always reaches the bottom of its page (same approach
+    # as the loot space in _build_inventory).
+    dy = 16.0
+    min_lines = 3
+    lines = max(min_lines, int((BOTTOM - b.y) // dy))
+    b.blank_lines(lines, dy=dy)
 
 
 def _spell_meta(s) -> str:

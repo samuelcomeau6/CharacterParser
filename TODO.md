@@ -1,5 +1,5 @@
 - Ability score improvement appears an incorrect number of times for the number of times the feat was chosen.
-- Attack notes fall off the end
 - Archery feat is not being parsed
-- Notes section should reach end of page
 - Character level should be before class levels
+- Add filter files that can be customized per character
+- Add a CLI prompt to generate filter files.
