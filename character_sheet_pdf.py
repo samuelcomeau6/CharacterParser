@@ -82,6 +82,15 @@ def text_width(s: str, font: str = "F1", size: float = 9.0) -> float:
     return total / 1000.0 * size
 
 
+def fit_size(text: str, max_width: float, font: str = "F1", start: float = 15.0,
+             min_size: float = 8.0) -> float:
+    """Largest size (down to min_size) at which `text` fits in max_width."""
+    size = start
+    while size > min_size and text_width(text, font, size) > max_width:
+        size -= 1
+    return size
+
+
 def wrap(s: str, font: str, size: float, max_width: float) -> List[str]:
     lines: List[str] = []
     for para in (s or "").split("\n"):
@@ -316,39 +325,10 @@ class SheetBuilder:
             self.cv.hline(MARGIN, self.y + 12, PAGE_W - MARGIN, gray=0.55)
             self.y += dy
 
-    def checkbox_row(self, checked: bool, text: str, extra: str = "", size: float = 9.0) -> None:
-        self.ensure(14)
-        box = 8.0
-        top = self.y + 1
-        self.cv.rect(MARGIN, top, box, box)
-        if checked:
-            self.cv.text(MARGIN + 1.2, top + box - 1, "X", font="F2", size=8)
-        self.cv.text(MARGIN + box + 6, self.y + 9, text, font="F1", size=size)
-        if extra:
-            self.cv.text_right(PAGE_W - MARGIN, self.y + 9, extra, font="F1", size=size, gray=0.4)
-        self.y += 13
-
-    def stat_boxes(self, items: List[tuple], w: float = 84.0, h: float = 52.0) -> None:
-        """items: list of (label, big_value, sub_value_or_None)"""
-        self.ensure(h + 6)
-        n = len(items)
-        total_gap = 8.0 * (n - 1)
-        box_w = min(w, (CONTENT_W - total_gap) / n)
-        x = MARGIN
-        for label, big, sub in items:
-            self.cv.rect(x, self.y, box_w, h)
-            self.cv.text_centered(x + box_w / 2, self.y + 11, label, font="F2", size=8)
-            self.cv.text_centered(x + box_w / 2, self.y + 30, str(big), font="F1", size=15)
-            if sub is not None:
-                self.cv.text_centered(x + box_w / 2, self.y + 45, str(sub), font="F1", size=8.5,
-                                       gray=0.35)
-            x += box_w + 8.0
-        self.y += h + 8
-
     def blank_box(self, x: float, y: float, w: float, h: float, label: str,
-                   small_note: Optional[str] = None) -> None:
+                   small_note: Optional[str] = None, label_size: float = 8.0) -> None:
         self.cv.rect(x, y, w, h)
-        self.cv.text_centered(x + w / 2, y + 11, label, font="F2", size=8)
+        self.cv.text_centered(x + w / 2, y + 11, label, font="F2", size=label_size)
         if small_note:
             self.cv.text_centered(x + w / 2, y + h - 4, small_note, font="F1", size=6, gray=0.5)
 
@@ -388,6 +368,7 @@ SKILL_SHORT = {
 
 CURRENCIES_ORDER = ["cp", "sp", "ep", "gp", "pp"]
 CURRENCY_NAMES = {"cp": "Copper", "sp": "Silver", "ep": "Electrum", "gp": "Gold", "pp": "Platinum"}
+CURRENCY_TO_GP = {"cp": 0.01, "sp": 0.1, "ep": 0.5, "gp": 1.0, "pp": 10.0}
 
 
 # --------------------------------------------------------------------------
@@ -396,7 +377,31 @@ CURRENCY_NAMES = {"cp": "Copper", "sp": "Silver", "ep": "Electrum", "gp": "Gold"
 
 
 def _build_header(b: SheetBuilder, c: Character) -> None:
+    top_y = b.y
     b.title(c.name)
+
+    # Inspiration sits in the top corner of the sheet, like the corner box
+    # on the official form, rather than buried lower down the page. Death
+    # Saves lives right underneath it, out of the way of the combat row.
+    box = 9.0
+    ix = PAGE_W - MARGIN - 95
+    iy = top_y + 6
+    b.cv.rect(ix, iy, box, box)
+    if c.inspiration:
+        b.cv.text(ix + 1.5, iy + box - 1.3, "X", font="F2", size=8)
+    b.cv.text(ix + box + 5, iy + box - 1, "Inspiration", font="F2", size=8.5)
+
+    dy = iy + box + 7
+    b.cv.text(ix, dy + 6, "Death Saves", font="F2", size=7.5)
+    dy += 11
+    ds_box, ds_gap = 6.0, 8.5
+    label_w = 26.0
+    for row_label, row_dy in (("Succ.", 0.0), ("Fail", 11.0)):
+        ry = dy + row_dy
+        b.cv.text(ix, ry + 6, row_label, font="F1", size=6.5)
+        for i in range(3):
+            b.cv.circle(ix + label_w + i * ds_gap + ds_box / 2, ry + 3, ds_box / 2)
+
     classes = " / ".join(str(x) for x in c.classes)
     bits = [classes or "Class ______", f"Level {c.level}"]
     b.line("   ".join(bits), font="F2", size=10.5, dy=15)
@@ -406,7 +411,6 @@ def _build_header(b: SheetBuilder, c: Character) -> None:
         f"Alignment: {c.alignment or '_______________'}",
         dy=13,
     )
-    b.line(f"XP: {c.xp}    Player Name: " + "_" * 28, dy=13)
     b.gap(6)
 
 
@@ -419,19 +423,27 @@ def _build_ability_columns(b: SheetBuilder, c: Character) -> None:
     col_w = (CONTENT_W - col_gap * 5) / 6
     score_box_h = 38.0
     header_h = 14.0
-    save_row_h = 15.0
+    save_row_h = 14.0
+    save_sep_gap = 6.0
     row_gap = 3.0
     blurb_size = 6.2
     blurb_leading = 7.4
-    box = 7.0
 
     by_ability = {a: sorted(n for n, ab in SKILLS.items() if ab == a) for a in ABILITIES}
+    skill_size = 6.8
+    skill_leading = 9.0
+
+    def skill_lines(name: str, s) -> List[str]:
+        label = SKILL_SHORT.get(name, name.title())
+        text = f"{label} {fmt(s.modifier)}"
+        return wrap(text, "F1", skill_size, col_w - 2)
 
     def column_height(ability: str) -> float:
-        h = header_h + score_box_h + 6.0 + save_row_h
+        h = header_h + score_box_h + 6.0 + save_row_h + save_sep_gap
         for name in by_ability[ability]:
-            lines = wrap(SKILL_BLURB.get(name, ""), "F1", blurb_size, col_w - 2)[:2]
-            h += 10.5 + len(lines) * blurb_leading + row_gap
+            s_lines = skill_lines(name, c.skills[name])
+            blurb = wrap(SKILL_BLURB.get(name, ""), "F1", blurb_size, col_w - 2)[:2]
+            h += len(s_lines) * skill_leading + len(blurb) * blurb_leading + row_gap
         return h
 
     total_h = max(column_height(a) for a in ABILITIES)
@@ -448,30 +460,20 @@ def _build_ability_columns(b: SheetBuilder, c: Character) -> None:
         y += header_h
 
         b.cv.rect(x, y, col_w, score_box_h)
-        b.cv.text_centered(x + col_w / 2, y + 18, str(ab.score), font="F1", size=15)
-        b.cv.text_centered(x + col_w / 2, y + 32, fmt(ab.modifier), font="F1", size=9, gray=0.35)
+        b.cv.text_centered(x + col_w / 2, y + 20, fmt(ab.modifier), font="F1", size=17)
+        b.cv.text_centered(x + col_w / 2, y + 33, str(ab.score), font="F1", size=9, gray=0.35)
         y += score_box_h + 6.0
 
-        top = y + 1
-        b.cv.rect(x, top, box, box)
-        if ab.save_proficient:
-            b.cv.text(x + 1.3, top + box - 1, "X", font="F2", size=6.5)
-        b.cv.text(x + box + 3, y + 7.5, fmt(ab.save), font="F2", size=7.5)
-        b.cv.text(x + box + 20, y + 7.5, "Save", font="F1", size=6.8, gray=0.35)
+        b.cv.text(x, y + 10, f"Save {fmt(ab.save)}", font="F2", size=9.5)
         y += save_row_h
+        b.cv.hline(x, y, x + col_w, gray=0.4)
+        y += save_sep_gap
 
         for name in by_ability[ability]:
             s = c.skills[name]
-            top = y + 1
-            b.cv.rect(x, top, box, box)
-            if s.expertise:
-                b.cv.text(x + 0.4, top + box - 1.1, "XX", font="F2", size=5)
-            elif s.proficient:
-                b.cv.text(x + 1.3, top + box - 1, "X", font="F2", size=6.5)
-            b.cv.text(x + box + 3, y + 7.5, fmt(s.modifier), font="F2", size=7.5)
-            label = SKILL_SHORT.get(name, name.title())
-            b.cv.text(x + box + 20, y + 7.5, label, font="F1", size=6.8)
-            y += 10.5
+            for ln in skill_lines(name, s):
+                b.cv.text(x, y + 7.0, ln, font="F1", size=skill_size)
+                y += skill_leading
 
             for ln in wrap(SKILL_BLURB.get(name, ""), "F1", blurb_size, col_w - 2)[:2]:
                 b.cv.text(x, y + 6.2, ln, font="F1", size=blurb_size, gray=0.42)
@@ -481,8 +483,6 @@ def _build_ability_columns(b: SheetBuilder, c: Character) -> None:
         max_bottom = max(max_bottom, y)
 
     b.y = max_bottom + 6
-    b.checkbox_row(c.inspiration, "Inspiration", extra=f"Proficiency Bonus  {fmt(c.proficiency_bonus)}")
-    b.gap(4)
 
 
 def _build_passives_and_profs(b: SheetBuilder, c: Character) -> None:
@@ -513,40 +513,95 @@ def _build_passives_and_profs(b: SheetBuilder, c: Character) -> None:
 def _build_combat(b: SheetBuilder, c: Character) -> None:
     b.section("Combat")
     speed_text = ", ".join(f"{k} {v} ft." for k, v in c.speeds.items()) or "30 ft."
-    b.stat_boxes([
-        ("ARMOR CLASS", c.armor_class, None),
-        ("INITIATIVE", fmt(c.initiative), None),
-        ("SPEED", speed_text, None),
-    ], w=150, h=48)
-    b.line(f"AC source: {c.armor_class_source}", size=7.5, gray=0.4, dy=12)
-    b.gap(4)
 
-    # HP row: max is known, current/temp are always left blank for pencil.
-    hp_w = (CONTENT_W - 16) / 3
+    # AC, Proficiency Bonus, Speed, and Initiative each get a box; Temp/
+    # Current/Max HP share one wider box (in that order) split by two
+    # dividers. Current/Temp HP are always left blank for pencil.
+    gap = 8.0
+    weights = [1.0, 1.0, 1.0, 1.0, 2.2]  # AC, Prof, Speed, Init, HP block
+    unit = (CONTENT_W - gap * (len(weights) - 1)) / sum(weights)
+    box_w = unit
+    hp_w = unit * weights[-1]
     h = 50
     b.ensure(h + 20)
     y = b.y
-    b.blank_box(MARGIN, y, hp_w, h, "MAX HIT POINTS")
-    b.cv.text_centered(MARGIN + hp_w / 2, y + 34, str(c.max_hit_points), font="F1", size=16)
-    b.blank_box(MARGIN + hp_w + 8, y, hp_w, h, "CURRENT HIT POINTS")
-    b.blank_box(MARGIN + 2 * (hp_w + 8), y, hp_w, h, "TEMPORARY HIT POINTS")
+    x = MARGIN
+
+    def stat_box(label: str, value, label_size: float = 6.5) -> None:
+        nonlocal x
+        b.blank_box(x, y, box_w, h, label, label_size=label_size)
+        size = fit_size(str(value), box_w - 8, start=15.0, min_size=8.0)
+        b.cv.text_centered(x + box_w / 2, y + 34, str(value), font="F1", size=size)
+        x += box_w + gap
+
+    stat_box("AC", c.armor_class)
+    stat_box("PROF. BONUS", fmt(c.proficiency_bonus))
+    stat_box("SPEED", speed_text)
+    stat_box("INITIATIVE", fmt(c.initiative))
+
+    # HP block: Temp HP, Current HP, Max HP, left to right, in one box.
+    b.cv.rect(x, y, hp_w, h)
+    third = hp_w / 3
+    b.cv.vline(x + third, y, y + h)
+    b.cv.vline(x + 2 * third, y, y + h)
+    b.cv.text_centered(x + third / 2, y + 11, "TEMP HP", font="F2", size=5.6)
+    b.cv.text_centered(x + third + third / 2, y + 11, "CURRENT HP", font="F2", size=5.6)
+    b.cv.text_centered(x + 2 * third + third / 2, y + 11, "MAX HP", font="F2", size=5.6)
+    max_size = fit_size(str(c.max_hit_points), third - 6, start=14.0, min_size=7.0)
+    b.cv.text_centered(x + 2 * third + third / 2, y + 34, str(c.max_hit_points), font="F1",
+                        size=max_size)
+
     b.y = y + h + 8
+    b.line(f"AC source: {c.armor_class_source}", size=7.5, gray=0.4, dy=12)
 
-    hit_dice = ", ".join(f"{n}{die}" for die, n in c.hit_dice.items())
-    b.line(f"Hit Dice: {hit_dice}    Total Hit Dice: " + "_" * 10, dy=14)
+    hit_dice_desc = ", ".join(f"{n}{die}" for die, n in c.hit_dice.items())
+    b.line(f"Hit Dice: {hit_dice_desc}", font="F2", size=9, dy=14)
 
-    b.ensure(16)
-    b.cv.text(MARGIN, b.y + 9, "Death Saves:", font="F2", size=9)
-    sx = MARGIN + 78
-    for label, gx in (("Successes", 0), ("Failures", 150)):
-        b.cv.text(sx + gx, b.y + 9, label, font="F1", size=8)
-        for i in range(3):
-            b.cv.circle(sx + gx + 62 + i * 14, b.y + 5, 4.5)
-    b.y += 18
+    # One checkbox per total Hit Die, so the player can track dice spent
+    # rather than a blank space that has to be kept up to date by hand.
+    total_dice = sum(c.hit_dice.values())
+    if total_dice:
+        dbox, dgap = 8.0, 5.0
+        per_row = max(1, int(CONTENT_W // (dbox + dgap)))
+        rows_needed = -(-total_dice // per_row)
+        b.ensure(rows_needed * (dbox + dgap) + 4)
+        y = b.y
+        x = MARGIN
+        for i in range(total_dice):
+            if i and i % per_row == 0:
+                x = MARGIN
+                y += dbox + dgap
+            b.cv.rect(x, y, dbox, dbox)
+            x += dbox + dgap
+        b.y = y + dbox + dgap
+
+    b.paragraph(
+        "Short Rest: spend any of the Hit Dice above; for each one spent, roll it and "
+        "add your Constitution modifier to regain that many hit points. "
+        "Long Rest: regain all lost hit points, and regain a number of spent Hit Dice "
+        "equal to half your total (minimum one).",
+        size=7,
+        gray=0.4,
+        leading=9,
+    )
+    b.gap(2)
 
     if c.conditions:
         b.line("Conditions: " + ", ".join(c.conditions), size=8.5)
     b.gap(4)
+
+
+def _cantrip_damage(s, char_level: int) -> str:
+    """Damage dice + type for a cantrip at the character's current level,
+    applying whichever cantrip-upgrade tier the level has reached. Cantrips
+    with no damage (Guidance, Message, ...) show a dash instead."""
+    if not s.damage_base_dice:
+        return "—"
+    dice = s.damage_base_dice
+    for lvl, tier_dice in s.damage_scaling:
+        if char_level >= lvl:
+            dice = tier_dice
+    return f"{dice} {s.damage_type}".strip() if s.damage_type else dice
 
 
 def _build_attacks(b: SheetBuilder, c: Character) -> None:
@@ -572,7 +627,26 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
         b.cv.text(MARGIN + 400, b.y + 9, notes[:28], font="F1", size=7.5, gray=0.4)
         b.y += 13
 
-    # Room to pencil in additional attacks / cantrip attacks.
+    # Every known cantrip counts as an at-will "attack" at the table, so it
+    # gets a row too — with the caster's spell attack bonus and save DC,
+    # since a cantrip might use either.
+    cantrips = sorted((s for s in c.spells if s.level == 0), key=lambda s: s.name)
+    if cantrips:
+        caster = next((cl for cl in c.classes if cl.spellcasting_ability), None)
+        atk_text, dc_note = "—", ""
+        if caster:
+            ab = c.abilities[caster.spellcasting_ability]
+            atk_text = fmt(c.proficiency_bonus + ab.modifier)
+            dc_note = f"Save DC {8 + c.proficiency_bonus + ab.modifier}"
+        for s in cantrips:
+            b.ensure(13)
+            b.cv.text(MARGIN, b.y + 9, s.name, font="F1", size=8.5)
+            b.cv.text(MARGIN + 200, b.y + 9, atk_text, font="F1", size=8.5)
+            b.cv.text(MARGIN + 270, b.y + 9, _cantrip_damage(s, c.level), font="F1", size=8.5)
+            b.cv.text(MARGIN + 400, b.y + 9, dc_note, font="F1", size=7.5, gray=0.4)
+            b.y += 13
+
+    # Room to pencil in additional attacks.
     for _ in range(3):
         b.ensure(13)
         b.cv.hline(MARGIN, b.y + 11, PAGE_W - MARGIN, gray=0.55)
@@ -581,18 +655,21 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
 
 
 def _build_currency(b: SheetBuilder, c: Character) -> None:
-    b.section("Treasure")
+    b.section("Currency")
     w = (CONTENT_W - 4 * 8) / 5
-    h = 42
+    h = 48
     b.ensure(h + 8)
     x = MARGIN
     for code in CURRENCIES_ORDER:
         known = c.currencies.get(code, 0)
+        rate = CURRENCY_TO_GP[code]
         b.cv.rect(x, b.y, w, h)
-        b.cv.text_centered(x + w / 2, b.y + 11, f"{CURRENCY_NAMES[code]} ({code.upper()})",
+        b.cv.text_centered(x + w / 2, b.y + 10, f"{CURRENCY_NAMES[code]} ({code.upper()})",
                             font="F2", size=7)
-        b.cv.hline(x + 8, b.y + 26, x + w - 8, gray=0.55)
-        note = f"at snapshot: {known}" if known else "at snapshot: 0"
+        b.cv.text_centered(x + w / 2, b.y + 19, f"1 {code} = {rate:g} gp", font="F1", size=5.5,
+                            gray=0.5)
+        b.cv.hline(x + 8, b.y + 36, x + w - 8, gray=0.55)
+        note = f"at snapshot: {known}"
         b.cv.text_centered(x + w / 2, b.y + h - 4, note, font="F1", size=6, gray=0.5)
         x += w + 8
     b.y += h + 8
@@ -601,47 +678,111 @@ def _build_currency(b: SheetBuilder, c: Character) -> None:
     b.gap(4)
 
 
+_MAX_ITEM_CHECKS = 24  # cap for stacks like arrows so a row can't run away
+
+
 def _build_inventory(b: SheetBuilder, c: Character) -> None:
     b.section("Equipment")
-    known = []
-    for i in c.inventory:
-        flags = "".join(["E" if i.equipped else "", "A" if i.attuned else "", "*" if i.magic else ""])
-        qty = f" x{i.quantity}" if i.quantity > 1 else ""
-        known.append(f"[{flags:<3}] {i.name}{qty}")
 
-    for row in known:
-        b.ensure(14)
-        b.cv.text(MARGIN, b.y + 9, row, font="F1", size=8.5)
-        b.y += 14
+    col_gap = 16.0
+    col_w = (CONTENT_W - col_gap) / 2
+    cbox, cgap = 6.0, 3.0
+    per_row = max(1, int(col_w // (cbox + cgap)))
+    name_size = 8.0
+    note_size, note_gray = 6.5, 0.45
+
+    def note_of(item) -> str:
+        bits = []
+        if item.equipped:
+            bits.append("equipped")
+        if item.attuned:
+            bits.append("attuned")
+        if item.magic:
+            bits.append("magic")
+        return ", ".join(bits)
+
+    def row_height(item) -> float:
+        # A single copy of an item gets no checkboxes at all — nothing to
+        # track. Only stacks (quantity > 1) get one checkbox per unit.
+        if item.quantity <= 1:
+            return 11 + 4
+        n = min(item.quantity, _MAX_ITEM_CHECKS)
+        rows = max(1, -(-n // per_row))
+        return 11 + rows * (cbox + cgap) + 4
+
+    items = c.inventory
+    half = -(-len(items) // 2)
+    columns = [items[:half], items[half:]]
+    col_x = [MARGIN, MARGIN + col_w + col_gap]
+
+    total_h = max((sum(row_height(i) for i in col) for col in columns), default=0)
+    b.ensure(total_h + 4)
+    y0 = b.y
+    col_bottoms = []
+
+    for ci, col_items in enumerate(columns):
+        x = col_x[ci]
+        y = y0
+        for item in col_items:
+            qty = f" x{item.quantity}" if item.quantity > 1 else ""
+            name = f"{item.name}{qty}"[:40]
+            b.cv.text(x, y + 9, name, font="F1", size=name_size)
+
+            note = note_of(item)
+            if note:
+                nx = x + text_width(name, "F1", name_size) + 4
+                note_lines = wrap(note, "F1", note_size, col_w - (nx - x))
+                if note_lines:
+                    b.cv.text(nx, y + 9, note_lines[0], font="F1", size=note_size, gray=note_gray)
+            y += 11
+
+            if item.quantity > 1:
+                n = min(item.quantity, _MAX_ITEM_CHECKS)
+                cx = x
+                for k in range(n):
+                    if k and k % per_row == 0:
+                        cx = x
+                        y += cbox + cgap
+                    b.cv.rect(cx, y, cbox, cbox)
+                    cx += cbox + cgap
+                if item.quantity > _MAX_ITEM_CHECKS:
+                    b.cv.text(cx + 3, y + cbox - 1, f"+{item.quantity - _MAX_ITEM_CHECKS} more",
+                               font="F1", size=6, gray=0.4)
+                y += cbox + cgap
+            y += 4
+        col_bottoms.append(y)
+
+    b.y = max(col_bottoms) if items else y0
 
     total_weight = sum(i.weight * i.quantity for i in c.inventory)
     b.line(f"Carried weight: {total_weight:g} lb", size=7.5, gray=0.4, dy=12)
 
     # Pad with ruled blank lines so at least half the equipment section is
     # empty and ready for the player to fill in during play.
-    blank_count = max(len(known), 6)
+    blank_count = max(len(items), 6)
     b.blank_lines(blank_count, dy=15, label="(space for loot found during play)")
     b.gap(4)
 
+
+def _build_features(b: SheetBuilder, c: Character) -> None:
     b.section("Features & Traits")
-    if c.feats:
-        for feat in c.feats:
-            b.line(f"- {feat}", size=8.5)
-    else:
+    if not c.feats:
         b.line("(none recorded)", size=8, gray=0.4)
-    b.blank_lines(4, dy=15)
+        b.gap(2)
+        return
+    for feat in c.feats:
+        b.ensure(11)
+        b.cv.text(MARGIN, b.y + 9, feat.name, font="F2", size=8.5)
+        b.y += 12
+        desc = html_to_text(feat.description)
+        if desc:
+            b.paragraph(desc, size=7.5, gray=0.25, leading=9.5)
+        else:
+            b.line("(no description in source data)", size=7, gray=0.45, dy=10)
+        b.gap(3)
 
 
-def _build_personality(b: SheetBuilder, c: Character) -> None:
-    b.section("Personality Traits")
-    b.blank_lines(2)
-    b.section("Ideals")
-    b.blank_lines(2)
-    b.section("Bonds")
-    b.blank_lines(2)
-    b.section("Flaws")
-    b.blank_lines(2)
-
+def _build_appearance_and_backstory(b: SheetBuilder, c: Character) -> None:
     b.section("Character Appearance")
     def field(label: str, value, suffix: str = "") -> str:
         return f"{label}: {value}{suffix}" if value else f"{label}: " + "_" * 14
@@ -672,33 +813,51 @@ def _spell_meta(s) -> str:
     return "   ".join(bits)
 
 
-def _build_spells(b: SheetBuilder, c: Character) -> None:
-    if not c.spells and not c.spell_slots and not c.pact_slots:
+def _build_spell_stats(b: SheetBuilder, c: Character) -> None:
+    """Spellcasting modifier, save DC, attack bonus, and slots — kept right
+    under Attacks & Spellcasting rather than off with the spell list."""
+    casters = [cl for cl in c.classes if cl.spellcasting_ability]
+    if not casters and not c.spell_slots and not c.pact_slots:
         return
 
     b.section("Spellcasting")
-    casters = [cl for cl in c.classes if cl.spellcasting_ability]
-    if casters:
-        rows = []
-        for cl in casters:
-            ab = c.abilities[cl.spellcasting_ability]
-            dc = 8 + c.proficiency_bonus + ab.modifier
-            atk = c.proficiency_bonus + ab.modifier
-            rows.append(f"{cl.name}: {ABBREV[cl.spellcasting_ability]}  "
-                        f"Save DC {dc}  Attack {fmt(atk)}")
-        for r in rows:
-            b.line(r, font="F2", size=9)
-    if c.spell_slots:
-        b.line("Spell Slots: " + ", ".join(f"L{lvl} x{n}" for lvl, n in sorted(c.spell_slots.items())))
+    for cl in casters:
+        ab = c.abilities[cl.spellcasting_ability]
+        dc = 8 + c.proficiency_bonus + ab.modifier
+        atk = c.proficiency_bonus + ab.modifier
+        b.line(f"{cl.name}: {ABBREV[cl.spellcasting_ability]} modifier {fmt(ab.modifier)}   "
+               f"Save DC {dc}   Attack {fmt(atk)}", font="F2", size=9)
+
+    sbox, sgap = 8.0, 5.0
+
+    def slot_checkboxes(label: str, count: int) -> None:
+        if not count:
+            return
+        b.ensure(14)
+        b.cv.text(MARGIN, b.y + 9, label, font="F1", size=8.5)
+        x = MARGIN + text_width(label, "F1", 8.5) + 12
+        for _ in range(count):
+            b.cv.rect(x, b.y + 1, sbox, sbox)
+            x += sbox + sgap
+        b.y += 14
+
+    for lvl in sorted(c.spell_slots):
+        slot_checkboxes(f"Level {lvl} Slots:", c.spell_slots[lvl])
     if c.pact_slots:
-        b.line(f"Pact Magic: {c.pact_slots.get('slots')} slots x level {c.pact_slots.get('level')}")
-    b.line("Slots Expended: " + "_" * 30, size=8.5, gray=0.4)
-    b.gap(6)
+        slot_checkboxes(f"Pact Magic (Level {c.pact_slots.get('level')}):",
+                         c.pact_slots.get("slots", 0))
+    b.gap(4)
+
+
+def _build_spells(b: SheetBuilder, c: Character) -> None:
+    if not c.spells:
+        return
 
     by_level = {}
     for s in c.spells:
         by_level.setdefault(s.level, []).append(s)
 
+    b.section("Spell List")
     for lvl in sorted(by_level):
         head = "Cantrips" if lvl == 0 else f"Level {lvl} Spells"
         b.section(head)
@@ -746,16 +905,20 @@ def build_pdf(c: Character) -> PDFDocument:
     b.cv = b.doc.new_page()
     b.y = MARGIN
     _build_attacks(b, c)
-    _build_currency(b, c)
+    _build_spell_stats(b, c)
 
     b.cv = b.doc.new_page()
     b.y = MARGIN
     _build_inventory(b, c)
+    _build_currency(b, c)
 
     b.cv = b.doc.new_page()
     b.y = MARGIN
-    _build_personality(b, c)
+    _build_appearance_and_backstory(b, c)
 
+    b.cv = b.doc.new_page()
+    b.y = MARGIN
+    _build_features(b, c)
     _build_spells(b, c)
 
     return b.doc

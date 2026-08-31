@@ -363,6 +363,15 @@ class Spell:
     range_text: Optional[str] = None
     duration_text: Optional[str] = None
     components_text: Optional[str] = None
+    damage_type: Optional[str] = None
+    damage_base_dice: Optional[str] = None
+    damage_scaling: List[Tuple[int, str]] = field(default_factory=list)
+
+
+@dataclass
+class Feat:
+    name: str
+    description: Optional[str] = None
 
 
 @dataclass
@@ -408,7 +417,7 @@ class Character:
     spells: List[Spell]
     spell_slots: Dict[int, int]
     pact_slots: Dict[str, int]
-    feats: List[str]
+    feats: List[Feat]
     conditions: List[str]
     currencies: Dict[str, int]
 
@@ -518,8 +527,7 @@ def parse_character(data: dict) -> Character:
         spells=_parse_spells(data),
         spell_slots=_parse_slots(data.get("spellSlots")),
         pact_slots=_parse_pact(data.get("pactMagic")),
-        feats=[(f.get("definition") or {}).get("name") for f in (data.get("feats") or [])
-               if (f.get("definition") or {}).get("name")],
+        feats=_parse_feats(data),
         conditions=[(c.get("definition") or {}).get("name") or f"condition {c.get('id')}"
                     for c in (data.get("conditions") or [])],
         currencies={k: v for k, v in (data.get("currencies") or {}).items() if v},
@@ -872,6 +880,64 @@ def _spell_components(d: dict) -> Optional[str]:
     return text
 
 
+_DAMAGE_TYPES = ["acid", "bludgeoning", "cold", "fire", "force", "lightning", "necrotic",
+                  "piercing", "poison", "psychic", "radiant", "slashing", "thunder"]
+_BASE_DAMAGE_RE = re.compile(
+    r"(\d+d\d+)(?:\s*\+\s*[\w.]+)?\s+(" + "|".join(_DAMAGE_TYPES) + r")\s+damage",
+    re.IGNORECASE,
+)
+# Cantrip upgrade text reads like "...2d10 at 5th level, 3d10 at 11th level,
+# and 4d10 at 17th level" or "...(2d10), 11th level (3d10)..." -- either
+# ordering of the level and the dice.
+_SCALING_RE = re.compile(
+    r"(\d+d\d+)\D{0,12}?(\d+)(?:st|nd|rd|th)\s+level|"
+    r"(\d+)(?:st|nd|rd|th)\s+level\D{0,12}?(\d+d\d+)",
+    re.IGNORECASE,
+)
+
+
+def _spell_damage(d: dict, text: str) -> Tuple[Optional[str], Optional[str], List[Tuple[int, str]]]:
+    """Best-effort damage type/dice for a cantrip.
+
+    D&D Beyond's structured fields for this vary by spell, so this leans on
+    whatever structured hints are present and falls back to reading the
+    dice straight out of the rules text -- including the "cantrip upgrade"
+    sentence that lists the dice at each higher level.
+    """
+    damage = d.get("damage") or {}
+    dtype = damage.get("damageType") or d.get("damageType")
+    dice = None
+    dice_info = damage.get("damageDice") or damage.get("diceInfo") or {}
+    if isinstance(dice_info, dict) and dice_info.get("diceCount") and dice_info.get("diceValue"):
+        dice = f"{dice_info['diceCount']}d{dice_info['diceValue']}"
+
+    if not dice or not dtype:
+        m = _BASE_DAMAGE_RE.search(text or "")
+        if m:
+            dice = dice or m.group(1)
+            dtype = dtype or m.group(2)
+
+    scaling: List[Tuple[int, str]] = []
+    ahl = d.get("atHigherLevels") or {}
+    for entry in ahl.get("higherLevelDetails") or []:
+        lvl = entry.get("level")
+        die = entry.get("die") or entry.get("dice") or {}
+        count = die.get("dieCount") or die.get("diceCount")
+        value = die.get("dieValue") or die.get("diceValue")
+        if lvl and count and value:
+            scaling.append((int(lvl), f"{count}d{value}"))
+
+    if not scaling:
+        for m in _SCALING_RE.finditer(text or ""):
+            if m.group(1):
+                scaling.append((int(m.group(2)), m.group(1)))
+            else:
+                scaling.append((int(m.group(3)), m.group(4)))
+
+    scaling.sort(key=lambda t: t[0])
+    return (dtype.title() if dtype else None), dice, scaling
+
+
 def _parse_spells(data: dict) -> List[Spell]:
     out: List[Spell] = []
     seen = set()
@@ -885,6 +951,8 @@ def _parse_spells(data: dict) -> List[Spell]:
         if key in seen:
             return
         seen.add(key)
+        description = d.get("description")
+        dtype, base_dice, scaling = _spell_damage(d, description or "")
         out.append(Spell(
             name=name,
             level=d.get("level", 0) or 0,
@@ -893,11 +961,14 @@ def _parse_spells(data: dict) -> List[Spell]:
             source=source,
             ritual=bool(d.get("ritual")),
             concentration=bool(d.get("concentration")),
-            description=d.get("description"),
+            description=description,
             casting_time=_spell_casting_time(d),
             range_text=_spell_range(d),
             duration_text=_spell_duration(d),
             components_text=_spell_components(d),
+            damage_type=dtype,
+            damage_base_dice=base_dice,
+            damage_scaling=scaling,
         ))
 
     for bucket, entries in (data.get("spells") or {}).items():
@@ -925,6 +996,22 @@ def _parse_pact(pact) -> Dict[str, int]:
         if p.get("available"):
             return {"level": p.get("level"), "slots": p.get("available")}
     return {}
+
+
+# Not actual feats -- homebrew/optional entries that ride along in the same
+# "feats" list on this character but shouldn't show up as such.
+_IGNORED_FEATS = {"Dark Bargain", "Character Threads", "Runestones"}
+
+
+def _parse_feats(data: dict) -> List[Feat]:
+    out = []
+    for f in data.get("feats") or []:
+        d = f.get("definition") or {}
+        name = d.get("name")
+        if not name or name in _IGNORED_FEATS:
+            continue
+        out.append(Feat(name=name, description=d.get("description") or d.get("snippet")))
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -985,7 +1072,7 @@ def render_sheet(c: Character) -> str:
                         ("Languages", c.languages)):
         L.append(f"  {label + ':':<11}{', '.join(vals) if vals else '—'}")
     if c.feats:
-        L.append(f"  {'Feats:':<11}{', '.join(c.feats)}")
+        L.append(f"  {'Feats:':<11}{', '.join(f.name for f in c.feats)}")
 
     if c.attacks:
         L.append(_rule("ATTACKS"))
