@@ -544,7 +544,7 @@ def parse_character(data: dict) -> Character:
         spell_slots=_parse_slots(data.get("spellSlots")) or _compute_spell_slots(classes),
         pact_slots=_parse_pact(data.get("pactMagic")) or _compute_pact_slots(classes),
         feats=_parse_feats(data, actions, prof) + _mastery_feats(weapon_masteries),
-        class_features=_parse_class_features(data, actions, prof),
+        class_features=_parse_class_features(data, actions, prof) + _parse_class_options(data),
         species_traits=_parse_species_traits(data, actions, prof),
         conditions=[(c.get("definition") or {}).get("name") or f"condition {c.get('id')}"
                     for c in (data.get("conditions") or [])],
@@ -1323,6 +1323,25 @@ def _mastery_feats(masteries: Dict[str, Tuple[str, Optional[str]]]) -> List[Feat
     out = []
     for weapon, (prop, desc) in sorted(masteries.items(), key=lambda kv: (kv[1][0], kv[0])):
         out.append(Feat(name=f"{prop} ({weapon.title()})", description=desc))
+    return out
+
+
+def _parse_class_options(data: dict) -> List[Feat]:
+    """Selected class-feature options -- a Sorcerer's chosen Metamagic, a
+    Battle Master's chosen maneuvers, and similar "pick N" choices -- each
+    with its own formal rules text, recorded under options.class. (Weapon
+    Mastery choices live under options.feat instead, and are handled by
+    _mastery_feats via the character's modifiers, so there's no overlap.)
+    """
+    out = []
+    seen = set()
+    for entry in (data.get("options") or {}).get("class") or []:
+        d = entry.get("definition") or {}
+        name = d.get("name")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(Feat(name=name, description=d.get("description") or d.get("snippet")))
     return out
 
 # D&D Beyond's `limitedUse.resetType` values, as observed on real characters.

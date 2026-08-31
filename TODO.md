@@ -1,7 +1,6 @@
-- Animal Handling is weirdly abbreviated.
-- Slight of Hand is weirdly abbreviated.
 - Ability score improvement appears an incorrect number of times for the number of times the feat was chosen.
 - Metamagic options that have been selected are not parse correctly.
 - Battle superiority die are not being parse correctly
 - Attack notes fall off the end
 - Archery feat is not being parsed
+- Lucky points are not being parsed
