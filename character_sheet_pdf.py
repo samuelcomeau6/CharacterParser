@@ -864,9 +864,9 @@ def _cantrip_damage(s, char_level: int) -> str:
 
 # Column layout for Attacks and Cantrips, sized in characters (of the F1
 # body text at the row size below) rather than bare points, and confined
-# to the left half of the page. ATK BONUS keeps a fixed 6-character
-# minimum (it must still fit e.g. "CON 14"); NAME and DAMAGE / TYPE get
-# reasonable caps, and NOTES takes whatever's left of the half-width.
+# to the left half of the page. ATK keeps a fixed 6-character minimum
+# (it must still fit e.g. "CON 14"); NAME and DMG get reasonable caps,
+# and NOTES takes whatever's left of the half-width.
 _ATTACK_ROW_SIZE = 8.5
 _ATTACK_CHAR_W = text_width("0", "F1", _ATTACK_ROW_SIZE)
 _ATTACK_TABLE_W = CONTENT_W / 2
@@ -875,12 +875,14 @@ _ATTACK_ATKB_MAXCHARS = 6
 _ATTACK_DAMAGE_MAXCHARS = 12
 _ATTACK_NAME_W = _ATTACK_NAME_MAXCHARS * _ATTACK_CHAR_W
 _ATTACK_ATKB_W = _ATTACK_ATKB_MAXCHARS * _ATTACK_CHAR_W
+_ATTACK_DMG_GAP_W = 2 * _ATTACK_CHAR_W  # extra breathing room between ATK and DMG
 _ATTACK_DAMAGE_W = _ATTACK_DAMAGE_MAXCHARS * _ATTACK_CHAR_W
-_ATTACK_NOTES_W = _ATTACK_TABLE_W - (_ATTACK_NAME_W + _ATTACK_ATKB_W + _ATTACK_DAMAGE_W)
+_ATTACK_NOTES_W = _ATTACK_TABLE_W - (_ATTACK_NAME_W + _ATTACK_ATKB_W + _ATTACK_DMG_GAP_W
+                                      + _ATTACK_DAMAGE_W)
 _ATTACK_NOTES_MAXCHARS = int(_ATTACK_NOTES_W // _ATTACK_CHAR_W)
 _ATTACK_COL_NAME = MARGIN
 _ATTACK_COL_ATKB = _ATTACK_COL_NAME + _ATTACK_NAME_W
-_ATTACK_COL_DMG = _ATTACK_COL_ATKB + _ATTACK_ATKB_W
+_ATTACK_COL_DMG = _ATTACK_COL_ATKB + _ATTACK_ATKB_W + _ATTACK_DMG_GAP_W
 _ATTACK_COL_NOTES = _ATTACK_COL_DMG + _ATTACK_DAMAGE_W
 _ATTACK_TABLE_RIGHT = MARGIN + _ATTACK_TABLE_W
 
@@ -894,8 +896,8 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
     b.y += 20
 
     b.ensure(13)
-    cols = [(_ATTACK_COL_NAME, "NAME"), (_ATTACK_COL_ATKB, "ATK BONUS"),
-            (_ATTACK_COL_DMG, "DAMAGE / TYPE"), (_ATTACK_COL_NOTES, "NOTES")]
+    cols = [(_ATTACK_COL_NAME, "NAME"), (_ATTACK_COL_ATKB, "ATK"),
+            (_ATTACK_COL_DMG, "DMG"), (_ATTACK_COL_NOTES, "NOTES")]
     for x, label in cols:
         b.cv.text(x, b.y + 8, label, font="F2", size=7.5, gray=0.4)
     b.y += 11
