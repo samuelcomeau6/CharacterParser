@@ -450,6 +450,9 @@ class Character:
     skin: Optional[str] = None
     faith: Optional[str] = None
 
+    # defenses (resistances/immunities/vulnerabilities, saving throw advantage)
+    defenses: List[str] = field(default_factory=list)
+
     raw: dict = field(default_factory=dict, repr=False)
 
     # ---- convenience -----------------------------------------------------
@@ -555,6 +558,7 @@ def parse_character(data: dict) -> Character:
         conditions=[(c.get("definition") or {}).get("name") or f"condition {c.get('id')}"
                     for c in (data.get("conditions") or [])],
         currencies={k: v for k, v in (data.get("currencies") or {}).items() if v},
+        defenses=_parse_defenses(mods),
         size=_parse_size(data, mods),
         alignment=ALIGNMENTS.get(data.get("alignmentId")),
         age=data.get("age"),
@@ -741,6 +745,40 @@ def _parse_senses(data: dict, mods) -> Dict[str, int]:
         if s.get("distance"):
             senses[f"custom-{s.get('senseId')}"] = s["distance"]
     return senses
+
+
+_DEFENSE_TYPES = {"resistance": "Resistance", "immunity": "Immunity", "vulnerability": "Vulnerability"}
+_SAVE_ADVANTAGE_TYPES = {"advantage": "Advantage", "disadvantage": "Disadvantage"}
+
+
+def _parse_defenses(mods) -> List[str]:
+    """Damage resistances/immunities/vulnerabilities and any advantage or
+    disadvantage on saving throws, straight from the character's
+    modifiers -- shown in the Defenses section next to the AC breakdown."""
+    seen = set()
+    out: List[str] = []
+
+    def add(line: str) -> None:
+        if line not in seen:
+            seen.add(line)
+            out.append(line)
+
+    for _, m in mods:
+        mtype = m.get("type")
+        subtype = m.get("subType") or ""
+        label = m.get("friendlySubtypeName") or titleize(subtype)
+        if not label:
+            continue
+        if mtype in _DEFENSE_TYPES:
+            add(f"{_DEFENSE_TYPES[mtype]}: {label}")
+        elif mtype in _SAVE_ADVANTAGE_TYPES and subtype.endswith("saving-throws"):
+            line = f"{_SAVE_ADVANTAGE_TYPES[mtype]} on {label}"
+            restriction = (m.get("restriction") or "").strip(" .")
+            if restriction:
+                line += f" ({restriction})"
+            add(line)
+
+    return out
 
 
 _SIZE_WORDS = ["tiny", "small", "medium", "large", "huge", "gargantuan"]

@@ -769,7 +769,6 @@ def _build_combat(b: SheetBuilder, c: Character) -> None:
                         size=max_size)
 
     b.y = y + h + 8
-    b.line(f"AC source: {c.armor_class_source}", size=7.5, gray=0.4, dy=12)
 
     if c.conditions:
         b.line("Conditions: " + ", ".join(c.conditions), size=8.5)
@@ -784,14 +783,16 @@ _REST_RULES_TEXT = (
 )
 
 
-def _build_hitdice_and_passives(b: SheetBuilder, c: Character) -> None:
-    """Hit Dice (with its short/long rest explanation) and Passive Scores &
-    Senses, side by side -- each half the page. The rest explanation stays
-    with Hit Dice, not off under the other column."""
+def _build_passives_defenses_hitdice(b: SheetBuilder, c: Character) -> None:
+    """Passive Scores & Senses, Defenses, and Hit Dice side by side -- each
+    a third of the page. The short/long rest explanation stays with Hit
+    Dice, and the AC breakdown note lives here in Defenses rather than
+    under the AC box in Combat."""
     col_gap = 16.0
-    col_w = (CONTENT_W - col_gap) / 2
+    col_w = (CONTENT_W - 2 * col_gap) / 3
     passives_x = MARGIN
-    hitdice_x = MARGIN + col_w + col_gap
+    defenses_x = MARGIN + col_w + col_gap
+    hitdice_x = MARGIN + 2 * (col_w + col_gap)
 
     hit_dice_desc = ", ".join(f"{n}{die}" for die, n in c.hit_dice.items())
     total_dice = sum(c.hit_dice.values())
@@ -805,10 +806,14 @@ def _build_hitdice_and_passives(b: SheetBuilder, c: Character) -> None:
         senses_line = "Senses: " + ", ".join(f"{titleize(k)} {v} ft." for k, v in c.senses.items())
     senses_lines = wrap(senses_line, "F1", 8.5, col_w) if senses_line else []
 
-    left_h = 20 + 14 + (dice_rows * (dbox + dgap) + 4 if total_dice else 0) + len(rest_lines) * 9
-    right_h = 20 + 14 + len(senses_lines) * 11
+    ac_lines = wrap(f"AC source: {c.armor_class_source}", "F1", 7.5, col_w)
+    defense_lines = [ln for d in c.defenses for ln in wrap(d, "F1", 8.5, col_w)]
 
-    b.ensure(max(left_h, right_h) + 8)
+    hitdice_h = 20 + 14 + (dice_rows * (dbox + dgap) + 4 if total_dice else 0) + len(rest_lines) * 9
+    passives_h = 20 + 14 + len(senses_lines) * 11
+    defenses_h = 20 + len(ac_lines) * 9 + (4 + len(defense_lines) * 11 if defense_lines else 0)
+
+    b.ensure(max(hitdice_h, passives_h, defenses_h) + 8)
     y0 = b.y
 
     # Right column: Hit Dice.
@@ -846,7 +851,24 @@ def _build_hitdice_and_passives(b: SheetBuilder, c: Character) -> None:
         y += 11
     passives_bottom = y
 
-    b.y = max(hitdice_bottom, passives_bottom) + 8
+    # Middle column: Defenses -- the AC breakdown, plus any damage
+    # resistance/immunity/vulnerability or saving-throw advantage parsed
+    # straight from the character's modifiers.
+    y = y0
+    b.cv.text(defenses_x, y + 9, "DEFENSES", font="F2", size=10)
+    b.cv.hline(defenses_x, y + 13, defenses_x + col_w, gray=0.6)
+    y += 20
+    for ln in ac_lines:
+        b.cv.text(defenses_x, y + 6, ln, font="F1", size=7.5, gray=0.4)
+        y += 9
+    if defense_lines:
+        y += 4
+        for ln in defense_lines:
+            b.cv.text(defenses_x, y + 8, ln, font="F1", size=8.5)
+            y += 11
+    defenses_bottom = y
+
+    b.y = max(hitdice_bottom, passives_bottom, defenses_bottom) + 8
 
 
 def _cantrip_damage(s, char_level: int) -> str:
@@ -1069,7 +1091,7 @@ def _build_feature_summary(b: SheetBuilder, c: Character,
     # blank space under the other one whenever only one side wrapped.
     # _build_attacks_and_features already reserves this whole section's
     # height up front, so no ensure() is needed while drawing either
-    # column here (compare _build_hitdice_and_passives, which does the
+    # column here (compare _build_passives_defenses_hitdice, which does the
     # same: one reservation, then two independently-advancing columns).
     def draw_column(x: float, col_items) -> float:
         y = b.y
@@ -1491,7 +1513,7 @@ def _build_attacks_and_features(b: SheetBuilder, c: Character) -> None:
     """Attacks & Cantrips + Spellcasting (left half) beside Traits & Feats
     (right half): two independent column stacks starting at the same y.
     Heights are measured up front (see _measure_height) and the whole
-    block reserved in one ensure() -- like _build_hitdice_and_passives --
+    block reserved in one ensure() -- like _build_passives_defenses_hitdice --
     so neither column's internal page breaks can desync from the other."""
     left_h = _measure_height(_left_column_attacks_and_spells, c)
     right_h = _measure_height(_build_feature_summary, c)
@@ -1559,7 +1581,7 @@ def build_pdf(c: Character, *, include_magic_item_descriptions: bool = True,
     b = SheetBuilder()
     _build_header(b, c)
     _build_combat(b, c)
-    _build_hitdice_and_passives(b, c)
+    _build_passives_defenses_hitdice(b, c)
     _build_ability_columns(b, c)
     _build_attacks_and_features(b, c)
     _build_other_proficiencies(b, c)
