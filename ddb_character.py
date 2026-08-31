@@ -383,6 +383,9 @@ class Feat:
     # long rest), or "long_plus_short" (one use back on a short rest, the
     # rest on a long rest) -- None if the feature has no usage limit.
     rest_type: Optional[str] = None
+    # "Action", "Bonus Action", or "Reaction", whichever is first mentioned
+    # in the description -- None if none of them appear.
+    action_type: Optional[str] = None
 
 
 @dataclass
@@ -543,9 +546,11 @@ def parse_character(data: dict) -> Character:
         spells=_parse_spells(data),
         spell_slots=_parse_slots(data.get("spellSlots")) or _compute_spell_slots(classes),
         pact_slots=_parse_pact(data.get("pactMagic")) or _compute_pact_slots(classes),
-        feats=_parse_feats(data, actions, prof) + _mastery_feats(weapon_masteries),
-        class_features=_parse_class_features(data, actions, prof) + _parse_class_options(data),
-        species_traits=_parse_species_traits(data, actions, prof),
+        feats=_with_action_types(_parse_feats(data, actions, prof)
+                                  + _mastery_feats(weapon_masteries)),
+        class_features=_with_action_types(_parse_class_features(data, actions, prof)
+                                           + _parse_class_options(data)),
+        species_traits=_with_action_types(_parse_species_traits(data, actions, prof)),
         conditions=[(c.get("definition") or {}).get("name") or f"condition {c.get('id')}"
                     for c in (data.get("conditions") or [])],
         currencies={k: v for k, v in (data.get("currencies") or {}).items() if v},
@@ -1317,6 +1322,25 @@ def _parse_weapon_masteries(mods, actions: List[dict]) -> Dict[str, Tuple[str, O
     return out
 
 
+# Longest phrase first ("Bonus Action" before bare "Action") so it wins
+# when both would otherwise match; word boundaries keep "Action" from
+# matching inside an unrelated word (it can't match inside "Reaction"
+# either -- there's no word boundary in the middle of that one word).
+_ACTION_TYPE_RE = re.compile(r"\b(Bonus Action|Reaction|Action)\b")
+
+
+def _extract_action_type(description: Optional[str]) -> Optional[str]:
+    if not description:
+        return None
+    m = _ACTION_TYPE_RE.search(description)
+    return m.group(1) if m else None
+
+
+def _with_action_types(feats: List[Feat]) -> List[Feat]:
+    return [dataclasses.replace(f, action_type=_extract_action_type(f.description))
+            for f in feats]
+
+
 def _mastery_feats(masteries: Dict[str, Tuple[str, Optional[str]]]) -> List[Feat]:
     """One Feat per known weapon mastery, so it shows up alongside real
     feats in both the summary and the full list."""
@@ -1449,6 +1473,33 @@ def _parse_feats(data: dict, actions: List[dict], prof: int) -> List[Feat]:
     return out
 
 
+# SRD Rage Damage table (Barbarian Features table): the bonus damage Rage
+# adds to Strength-based attacks, by Barbarian level. Unchanged between the
+# 2014 and 2024 rules.
+def _rage_damage_bonus(level: int) -> int:
+    if level >= 16:
+        return 4
+    if level >= 9:
+        return 3
+    return 2
+
+
+# The Rage feature's description mentions "the Barbarian Features table"
+# twice -- once for how many times per rest you can Rage, and once (right
+# after "Rage Damage column of the") for the damage bonus -- so match the
+# specific Rage Damage reference, not just the first "...Features table".
+_RAGE_DAMAGE_TABLE_RE = re.compile(r"Rage Damage column of the Barbarian Features table",
+                                    re.IGNORECASE)
+
+
+def _annotate_rage_description(description: Optional[str], level: int) -> Optional[str]:
+    if not description or not _RAGE_DAMAGE_TABLE_RE.search(description):
+        return description
+    bonus = _rage_damage_bonus(level)
+    return _RAGE_DAMAGE_TABLE_RE.sub(lambda m: f"{m.group(0)} (currently {fmt(bonus)} for you)",
+                                      description, count=1)
+
+
 def _parse_class_features(data: dict, actions: List[dict], prof: int) -> List[Feat]:
     """Class features the character actually has at their current level.
 
@@ -1460,6 +1511,7 @@ def _parse_class_features(data: dict, actions: List[dict], prof: int) -> List[Fe
     seen = set()
     for cls in data.get("classes") or []:
         level = cls.get("level") or 0
+        class_name = (cls.get("definition") or {}).get("name") or ""
         for f in cls.get("classFeatures") or []:
             d = f.get("definition") or {}
             name = d.get("name")
@@ -1468,6 +1520,8 @@ def _parse_class_features(data: dict, actions: List[dict], prof: int) -> List[Fe
                 continue
             seen.add(name)
             description = d.get("description") or d.get("snippet")
+            if name == "Rage" and class_name.lower() == "barbarian":
+                description = _annotate_rage_description(description, level)
             max_uses, rest_type = _feat_usage(name, description, actions, prof)
             out.append(Feat(name=name, description=description, max_uses=max_uses,
                              rest_type=rest_type))

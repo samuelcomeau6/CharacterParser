@@ -956,8 +956,13 @@ def _build_feature_summary(b: SheetBuilder, c: Character) -> None:
     def draw_entry(x0: float, y: float, feat) -> None:
         nonlocal needs_footnote
         b.cv.text(x0, y + 9, feat.name, font="F1", size=8.5)
+        x = x0 + text_width(feat.name, "F1", 8.5)
+        if feat.action_type:
+            tag = f" ({feat.action_type})"
+            b.cv.text(x, y + 9, tag, font="F1", size=7, gray=0.4)
+            x += text_width(tag, "F1", 7)
         if feat.max_uses:
-            x = x0 + text_width(feat.name, "F1", 8.5) + 10
+            x += 10
             for _ in range(feat.max_uses):
                 b.cv.rect(x, y + 1, box, box)
                 x += box + gap
