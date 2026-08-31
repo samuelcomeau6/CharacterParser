@@ -432,6 +432,7 @@ class Character:
     currencies: Dict[str, int]
 
     # bio
+    size: Optional[str] = None
     alignment: Optional[str] = None
     age: Optional[int] = None
     gender: Optional[str] = None
@@ -545,6 +546,7 @@ def parse_character(data: dict) -> Character:
         conditions=[(c.get("definition") or {}).get("name") or f"condition {c.get('id')}"
                     for c in (data.get("conditions") or [])],
         currencies={k: v for k, v in (data.get("currencies") or {}).items() if v},
+        size=_parse_size(data, mods),
         alignment=ALIGNMENTS.get(data.get("alignmentId")),
         age=data.get("age"),
         gender=data.get("gender"),
@@ -722,6 +724,29 @@ def _parse_senses(data: dict, mods) -> Dict[str, int]:
         if s.get("distance"):
             senses[f"custom-{s.get('senseId')}"] = s["distance"]
     return senses
+
+
+_SIZE_WORDS = ["tiny", "small", "medium", "large", "huge", "gargantuan"]
+_SIZE_WORD_RE = re.compile(r"\b(" + "|".join(_SIZE_WORDS) + r")\b", re.IGNORECASE)
+
+
+def _parse_size(data: dict, mods) -> Optional[str]:
+    """The character's size category. Some species offer a size choice
+    (e.g. Small or Medium); when one's been made it shows up as a "size"
+    modifier with the chosen value as its subtype. Species with a single
+    fixed size (most of them) don't get such a modifier at all, so fall
+    back to the first size word in the race's own "Size" trait text.
+    """
+    for _, m in mods:
+        if m.get("type") == "size" and m.get("friendlySubtypeName"):
+            return m["friendlySubtypeName"]
+    for t in (data.get("race") or {}).get("racialTraits") or []:
+        d = t.get("definition") or {}
+        if (d.get("name") or "").lower() == "size":
+            match = _SIZE_WORD_RE.search(d.get("description") or "")
+            if match:
+                return match.group(1).title()
+    return None
 
 
 def _proficiency_group(data: dict, mods, group: str) -> List[str]:

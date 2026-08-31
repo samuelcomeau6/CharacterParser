@@ -601,6 +601,7 @@ def _build_header(b: SheetBuilder, c: Character) -> None:
     b.line("   ".join(bits), font="F2", size=10.5, dy=15)
     b.line(
         f"Race: {c.race or '_______________'}    "
+        f"Size: {c.size or '_______________'}    "
         f"Background: {c.background or '_______________'}    "
         f"Alignment: {c.alignment or '_______________'}",
         dy=13,
@@ -1064,17 +1065,44 @@ def _build_features(b: SheetBuilder, c: Character) -> None:
 
 def _build_appearance_and_backstory(b: SheetBuilder, c: Character) -> None:
     b.section("Character Appearance")
+
     def field(label: str, value, suffix: str = "") -> str:
         return f"{label}: {value}{suffix}" if value else f"{label}: " + "_" * 14
-    b.line(field("Age", c.age) + "    " + field("Gender", c.gender), dy=14)
-    b.line(field("Height", c.height) + "    " + field("Weight", c.weight_lbs, " lb"), dy=14)
-    b.line(field("Eyes", c.eyes) + "    " + field("Skin", c.skin) + "    " + field("Hair", c.hair),
-           dy=14)
-    b.line(field("Faith", c.faith), dy=14)
-    b.gap(4)
 
-    b.section("Allies & Organizations")
-    b.blank_lines(3)
+    # Portrait box: exactly a quarter of one page's usable area (half its
+    # width, half its height), sitting beside the appearance fields.
+    col_gap = 16.0
+    box_w = CONTENT_W / 2
+    box_h = (BOTTOM - MARGIN) / 2
+    left_w = CONTENT_W - box_w - col_gap
+
+    b.ensure(box_h + 8)
+    y0 = b.y
+    y = y0
+    for text in (field("Age", c.age), field("Gender", c.gender),
+                 field("Height", c.height), field("Weight", c.weight_lbs, " lb"),
+                 field("Eyes", c.eyes), field("Skin", c.skin), field("Hair", c.hair),
+                 field("Faith", c.faith)):
+        b.cv.text(MARGIN, y + 9, text, font="F1", size=9)
+        y += 14
+
+    # Allies & Organizations lives in the narrow space left over below the
+    # appearance fields, still confined to this column (beside the
+    # portrait box, not spanning under it).
+    y += 6
+    b.cv.text(MARGIN, y + 9, "ALLIES & ORGANIZATIONS", font="F2", size=9)
+    b.cv.hline(MARGIN, y + 13, MARGIN + left_w, gray=0.6)
+    y += 20
+    while y + 16 <= y0 + box_h:
+        b.cv.hline(MARGIN, y + 12, MARGIN + left_w, gray=0.55)
+        y += 16
+    left_bottom = y
+
+    box_x = MARGIN + left_w + col_gap
+    b.blank_box(box_x, y0, box_w, box_h, "PORTRAIT",
+                small_note="(sketch, or tape/staple a photo here)")
+
+    b.y = max(left_bottom, y0 + box_h) + 8
 
     b.section("Additional Notes / Backstory")
     b.blank_lines(9)
