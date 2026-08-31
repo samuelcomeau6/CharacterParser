@@ -381,13 +381,9 @@ SKILL_BLURB = {
     "survival": "Track, forage, navigate the wild",
 }
 
-ABILITY_BLURB = {
-    "strength": "Melee power, carrying capacity",
-    "dexterity": "Agility, reflexes, ranged attacks",
-    "constitution": "Stamina, health, endurance",
-    "intelligence": "Reasoning, memory, deduction",
-    "wisdom": "Awareness, intuition, willpower",
-    "charisma": "Force of personality, presence",
+SKILL_SHORT = {
+    "animal handling": "An. Handling",
+    "sleight of hand": "Slt of Hand",
 }
 
 CURRENCIES_ORDER = ["cp", "sp", "ep", "gp", "pp"]
@@ -414,50 +410,78 @@ def _build_header(b: SheetBuilder, c: Character) -> None:
     b.gap(6)
 
 
-def _build_abilities(b: SheetBuilder, c: Character) -> None:
-    b.section("Ability Scores")
-    items = []
-    for a in ABILITIES:
-        ab = c.abilities[a]
-        items.append((ABBREV[a], ab.score, fmt(ab.modifier)))
-    b.stat_boxes(items, w=84, h=48)
-    for a in ABILITIES:
-        b.ensure(11)
-        b.cv.text(MARGIN, b.y + 8, f"{ABBREV[a]}: {ABILITY_BLURB[a]}", font="F1", size=7.5,
-                   gray=0.4)
-        b.y += 10.5
-    b.gap(6)
+def _build_ability_columns(b: SheetBuilder, c: Character) -> None:
+    """One column per ability: score box, its saving throw, then the skills
+    it governs — stacked together so each ability's letters (STR, DEX, ...)
+    appear once instead of being repeated across three separate sections."""
+    b.section("Ability Scores, Saving Throws & Skills")
+    col_gap = 6.0
+    col_w = (CONTENT_W - col_gap * 5) / 6
+    score_box_h = 38.0
+    header_h = 14.0
+    save_row_h = 15.0
+    row_gap = 3.0
+    blurb_size = 6.2
+    blurb_leading = 7.4
+    box = 7.0
+
+    by_ability = {a: sorted(n for n, ab in SKILLS.items() if ab == a) for a in ABILITIES}
+
+    def column_height(ability: str) -> float:
+        h = header_h + score_box_h + 6.0 + save_row_h
+        for name in by_ability[ability]:
+            lines = wrap(SKILL_BLURB.get(name, ""), "F1", blurb_size, col_w - 2)[:2]
+            h += 10.5 + len(lines) * blurb_leading + row_gap
+        return h
+
+    total_h = max(column_height(a) for a in ABILITIES)
+    b.ensure(total_h + 8)
+
+    y0 = b.y
+    max_bottom = y0
+    for i, ability in enumerate(ABILITIES):
+        x = MARGIN + i * (col_w + col_gap)
+        y = y0
+        ab = c.abilities[ability]
+
+        b.cv.text_centered(x + col_w / 2, y + 10, ABBREV[ability], font="F2", size=11)
+        y += header_h
+
+        b.cv.rect(x, y, col_w, score_box_h)
+        b.cv.text_centered(x + col_w / 2, y + 18, str(ab.score), font="F1", size=15)
+        b.cv.text_centered(x + col_w / 2, y + 32, fmt(ab.modifier), font="F1", size=9, gray=0.35)
+        y += score_box_h + 6.0
+
+        top = y + 1
+        b.cv.rect(x, top, box, box)
+        if ab.save_proficient:
+            b.cv.text(x + 1.3, top + box - 1, "X", font="F2", size=6.5)
+        b.cv.text(x + box + 3, y + 7.5, fmt(ab.save), font="F2", size=7.5)
+        b.cv.text(x + box + 20, y + 7.5, "Save", font="F1", size=6.8, gray=0.35)
+        y += save_row_h
+
+        for name in by_ability[ability]:
+            s = c.skills[name]
+            top = y + 1
+            b.cv.rect(x, top, box, box)
+            if s.expertise:
+                b.cv.text(x + 0.4, top + box - 1.1, "XX", font="F2", size=5)
+            elif s.proficient:
+                b.cv.text(x + 1.3, top + box - 1, "X", font="F2", size=6.5)
+            b.cv.text(x + box + 3, y + 7.5, fmt(s.modifier), font="F2", size=7.5)
+            label = SKILL_SHORT.get(name, name.title())
+            b.cv.text(x + box + 20, y + 7.5, label, font="F1", size=6.8)
+            y += 10.5
+
+            for ln in wrap(SKILL_BLURB.get(name, ""), "F1", blurb_size, col_w - 2)[:2]:
+                b.cv.text(x, y + 6.2, ln, font="F1", size=blurb_size, gray=0.42)
+                y += blurb_leading
+            y += row_gap
+
+        max_bottom = max(max_bottom, y)
+
+    b.y = max_bottom + 6
     b.checkbox_row(c.inspiration, "Inspiration", extra=f"Proficiency Bonus  {fmt(c.proficiency_bonus)}")
-    b.gap(4)
-
-
-def _build_saves(b: SheetBuilder, c: Character) -> None:
-    b.section("Saving Throws")
-    for a in ABILITIES:
-        ab = c.abilities[a]
-        b.checkbox_row(ab.save_proficient, f"{fmt(ab.save)}  {ABBREV[a]} Saving Throw")
-    b.gap(6)
-
-
-def _build_skills(b: SheetBuilder, c: Character) -> None:
-    b.section("Skills")
-    for name in sorted(c.skills):
-        s = c.skills[name]
-        b.ensure(15)
-        box = 8.0
-        top = b.y + 1
-        b.cv.rect(MARGIN, top, box, box)
-        if s.expertise:
-            b.cv.text(MARGIN + 0.5, top + box - 1, "XX", font="F2", size=6.5)
-        elif s.proficient:
-            b.cv.text(MARGIN + 1.2, top + box - 1, "X", font="F2", size=8)
-        x = MARGIN + box + 6
-        b.cv.text(x, b.y + 9, fmt(s.modifier), font="F2", size=9)
-        x += 26
-        b.cv.text(x, b.y + 9, f"{name.title()} ({ABBREV[s.ability]})", font="F1", size=9)
-        x += 145
-        b.cv.text(x, b.y + 9, SKILL_BLURB.get(name, ""), font="F1", size=7.5, gray=0.4)
-        b.y += 14
     b.gap(4)
 
 
@@ -716,9 +740,7 @@ def build_pdf(c: Character) -> PDFDocument:
     b = SheetBuilder()
     _build_header(b, c)
     _build_combat(b, c)
-    _build_abilities(b, c)
-    _build_saves(b, c)
-    _build_skills(b, c)
+    _build_ability_columns(b, c)
     _build_passives_and_profs(b, c)
 
     b.cv = b.doc.new_page()
