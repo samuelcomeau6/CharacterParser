@@ -255,7 +255,11 @@ class Canvas:
         return PAGE_H - y
 
     def set_gray(self, g: float) -> None:
+        # Set both fill (g) and stroke (G) color -- lines/rects are drawn
+        # with the S (stroke) operator, so without G they'd always render
+        # in the default black stroke color regardless of this value.
         self.ops.append(f"{g:.2f} g")
+        self.ops.append(f"{g:.2f} G")
 
     def line_width(self, w: float) -> None:
         self.ops.append(f"{w:.2f} w")
@@ -631,7 +635,10 @@ def _build_ability_columns(b: SheetBuilder, c: Character) -> None:
     def skill_lines(name: str, s) -> List[str]:
         label = SKILL_SHORT.get(name, name.title())
         text = f"{label} {fmt(s.modifier)}"
-        return wrap(text, "F1", skill_size, col_w - 2)
+        # Reserve room on the right for a (P)/(E) marker so it never
+        # overlaps the wrapped text it's justified against.
+        marker_w = 16.0 if (s.proficient or s.expertise) else 0.0
+        return wrap(text, "F1", skill_size, col_w - 2 - marker_w)
 
     def column_height(ability: str) -> float:
         h = header_h + score_box_h + 6.0 + save_row_h + save_sep_gap
@@ -660,14 +667,21 @@ def _build_ability_columns(b: SheetBuilder, c: Character) -> None:
         y += score_box_h + 6.0
 
         b.cv.text(x, y + 10, f"Save {fmt(ab.save)}", font="F2", size=9.5)
+        if ab.save_proficient:
+            b.cv.text_right(x + col_w, y + 10, "(P)", font="F2", size=9.5)
         y += save_row_h
         b.cv.hline(x, y, x + col_w, gray=0.4)
         y += save_sep_gap
 
         for name in by_ability[ability]:
             s = c.skills[name]
-            for ln in skill_lines(name, s):
+            marker = "(E)" if s.expertise else ("(P)" if s.proficient else "")
+            lines = skill_lines(name, s)
+            for li, ln in enumerate(lines):
                 b.cv.text(x, y + 7.0, ln, font="F1", size=skill_size)
+                if marker and li == len(lines) - 1:
+                    b.cv.text_right(x + col_w, y + 7.0, marker, font="F2", size=skill_size,
+                                     gray=0.35)
                 y += skill_leading
 
             for ln in wrap(SKILL_BLURB.get(name, ""), "F1", blurb_size, col_w - 2)[:2]:
@@ -676,6 +690,10 @@ def _build_ability_columns(b: SheetBuilder, c: Character) -> None:
             y += row_gap
 
         max_bottom = max(max_bottom, y)
+
+    for i in range(1, len(ABILITIES)):
+        sep_x = MARGIN + i * (col_w + col_gap) - col_gap / 2
+        b.cv.vline(sep_x, y0, max_bottom, gray=0.8)
 
     b.y = max_bottom + 6
 

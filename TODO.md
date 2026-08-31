@@ -1,6 +1,6 @@
-- Other proficiencies and languages should be located near the end of the character sheet, above Features and traits
-- Saves and skills should have a right justified (P) after the modifier if the character has proficiency or an (E) if they have expertise.
+- There is a lot of white space between feats and inventory
 - The inventory should have its own dedicated page.
 - Animal Handling is weirdly abbreviated.
+- Slight of Hand is weirdly abbreviated.
 - Ability score improvement appears an incorrect number of times for the number of times the feat was chosen.
 - Metamagic options that have been selected are not parse correctly.
