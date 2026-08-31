@@ -881,8 +881,12 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
         b.cv.text(MARGIN + 270, b.y + 9, dmg, font="F1", size=8.5)
         # The weapon's own formal properties (Light, Heavy, Thrown, ...)
         # already include any known mastery (e.g. Cleave, Vex) -- no need
-        # to separately spell out which ability it uses or its range/reach.
-        props_text = ", ".join(a.properties)
+        # to separately spell out which ability it uses, but the range/reach
+        # itself is still worth keeping since it's not implied by name alone.
+        notes_parts = list(a.properties)
+        if a.range:
+            notes_parts.append(a.range)
+        props_text = ", ".join(notes_parts)
         b.cv.text(MARGIN + 400, b.y + 9, props_text[:40], font="F1", size=7.5, gray=0.4)
         b.cv.hline(MARGIN, b.y + 11, PAGE_W - MARGIN, gray=0.85)
         b.y += 13
