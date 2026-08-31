@@ -1,6 +1,7 @@
-- There is a lot of white space between feats and inventory
-- The inventory should have its own dedicated page.
 - Animal Handling is weirdly abbreviated.
 - Slight of Hand is weirdly abbreviated.
 - Ability score improvement appears an incorrect number of times for the number of times the feat was chosen.
 - Metamagic options that have been selected are not parse correctly.
+- Battle superiority die are not being parse correctly
+- More than 24 items causes issues
+- Attack notes fall off the end

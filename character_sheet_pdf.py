@@ -868,6 +868,7 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
         # to separately spell out which ability it uses or its range/reach.
         props_text = ", ".join(a.properties)
         b.cv.text(MARGIN + 400, b.y + 9, props_text[:40], font="F1", size=7.5, gray=0.4)
+        b.cv.hline(MARGIN, b.y + 11, PAGE_W - MARGIN, gray=0.85)
         b.y += 13
 
     # Every known cantrip counts as an at-will "attack" at the table, so it
@@ -899,6 +900,7 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
 
             b.cv.text(MARGIN + 270, b.y + 9, _cantrip_damage(s, c.level), font="F1", size=8.5)
             b.cv.text(MARGIN + 400, b.y + 9, s.range_text or "", font="F1", size=7.5, gray=0.4)
+            b.cv.hline(MARGIN, b.y + 11, PAGE_W - MARGIN, gray=0.85)
             b.y += 13
 
     # Room to pencil in additional attacks.
@@ -935,28 +937,33 @@ def _build_feature_summary(b: SheetBuilder, c: Character) -> None:
     row_h = 13.0
     needs_footnote = False
 
-    half = -(-len(items) // 2)
-    columns = [items[:half], items[half:]]
-    b.ensure(half * row_h + 4)
-    y0 = b.y
+    def draw_entry(x0: float, y: float, feat) -> None:
+        nonlocal needs_footnote
+        b.cv.text(x0, y + 9, feat.name, font="F1", size=8.5)
+        if feat.max_uses:
+            x = x0 + text_width(feat.name, "F1", 8.5) + 10
+            for _ in range(feat.max_uses):
+                b.cv.rect(x, y + 1, box, box)
+                x += box + gap
+            suffix = _REST_SUFFIX[feat.rest_type]
+            if feat.rest_type == "long_plus_short":
+                needs_footnote = True
+            b.cv.text(x + 3, y + 9, suffix, font="F1", size=7, gray=0.4)
 
-    for ci, col_items in enumerate(columns):
-        x0 = col_x[ci]
-        y = y0
-        for feat in col_items:
-            b.cv.text(x0, y + 9, feat.name, font="F1", size=8.5)
-            if feat.max_uses:
-                x = x0 + text_width(feat.name, "F1", 8.5) + 10
-                for _ in range(feat.max_uses):
-                    b.cv.rect(x, y + 1, box, box)
-                    x += box + gap
-                suffix = _REST_SUFFIX[feat.rest_type]
-                if feat.rest_type == "long_plus_short":
-                    needs_footnote = True
-                b.cv.text(x + 3, y + 9, suffix, font="F1", size=7, gray=0.4)
-            y += row_h
-
-    b.y = y0 + half * row_h
+    # Pair items row by row (2 per row, one per column) rather than
+    # splitting the list into a first-half/second-half block reserved in
+    # one go -- reserving a whole two-column block up front can't be
+    # continued past a page break, so a long enough list would run off
+    # the bottom of the page. Checking room one row at a time lets the
+    # normal ensure()-driven page break land cleanly on a row boundary,
+    # with both columns continuing correctly on the next page.
+    for i in range(0, len(items), 2):
+        b.ensure(row_h)
+        y = b.y
+        draw_entry(col_x[0], y, items[i])
+        if i + 1 < len(items):
+            draw_entry(col_x[1], y, items[i + 1])
+        b.y += row_h
 
     if needs_footnote:
         b.line("* One use is also regained after a short rest.", size=7, gray=0.45, dy=10)
@@ -985,6 +992,16 @@ def _build_currency(b: SheetBuilder, c: Character) -> None:
     b.line("(Blank line above each box is for your current total — the small number "
            "underneath is what you had when this sheet was made.)", size=7, gray=0.45, dy=11)
     b.gap(4)
+
+
+def _measure_height(build_fn, c: Character) -> float:
+    """How much vertical space `build_fn(scratch, c)` uses, by rendering it
+    onto a throwaway page and reading off how far the cursor moved -- lets
+    us size something earlier in the flow to a section's real height
+    without duplicating that section's layout logic by hand."""
+    scratch = SheetBuilder()
+    build_fn(scratch, c)
+    return scratch.y - MARGIN
 
 
 _MAX_ITEM_CHECKS = 24  # cap for stacks like arrows so a row can't run away
@@ -1071,11 +1088,30 @@ def _build_inventory(b: SheetBuilder, c: Character) -> None:
     total_weight = sum(i.weight * i.quantity for i in c.inventory)
     b.line(f"Carried weight: {total_weight:g} lb", size=7.5, gray=0.4, dy=12)
 
-    # Pad with ruled blank lines so at least half the equipment section is
-    # empty and ready for the player to fill in during play.
-    blank_count = max(len(items), 6)
-    b.blank_lines(blank_count, dy=15, label="(space for loot found during play)")
-    b.gap(4)
+    # Ruled blank lines for loot found during play, in the same two-column
+    # layout as the item list above (a gap between the columns, not one
+    # line running the full page width). The row count stretches or
+    # shrinks so Magical Items and Currency -- which always follow this
+    # section -- land flush with the bottom of the page, never fewer than
+    # 5 rows even if that means Currency spills onto the next page anyway.
+    dy = 15.0
+    min_rows = 5
+    label_h = 11.0
+    trailing_gap = 4.0
+    tail_h = (_measure_height(_build_magical_items, c)
+              + _measure_height(_build_currency, c))
+    available = BOTTOM - b.y - label_h - trailing_gap - tail_h
+    blank_rows = max(min_rows, int(available // dy))
+
+    b.line("(space for loot found during play)", font="F2", size=8, gray=0.35, dy=label_h)
+    b.ensure(blank_rows * dy)
+    y0 = b.y
+    for row in range(blank_rows):
+        ry = y0 + row * dy + 12
+        b.cv.hline(MARGIN, ry, MARGIN + col_w, gray=0.55)
+        b.cv.hline(MARGIN + col_w + col_gap, ry, PAGE_W - MARGIN, gray=0.55)
+    b.y = y0 + blank_rows * dy
+    b.gap(trailing_gap)
 
 
 _ATTUNEMENT_MAX = 3  # the standard 5e limit; nothing in the source data ever raises it
@@ -1317,15 +1353,9 @@ def build_pdf(c: Character, *, include_magic_item_descriptions: bool = True,
     _build_hitdice_and_passives(b, c)
     _build_ability_columns(b, c)
     _build_attacks(b, c)
-
-    b.cv = b.doc.new_page()
-    b.y = MARGIN
     _build_feature_summary(b, c)
     _build_spell_stats(b, c)
     _build_other_proficiencies(b, c)
-
-    b.cv = b.doc.new_page()
-    b.y = MARGIN
     _build_inventory(b, c)
     _build_magical_items(b, c)
     _build_currency(b, c)
