@@ -886,12 +886,17 @@ def _parse_inventory(data: dict) -> List[Item]:
         max_uses = (item.get("limitedUse") or {}).get("maxUses")
         max_charges = max_uses if (max_uses or 0) > 1 else None
 
+        # For a stackable item (ammunition, caltrops, ...) `weight` is the
+        # weight of a full bundle of `bundleSize` units, not one unit --
+        # e.g. Firearm Bullets: 2 lb per bundle of 10, i.e. 0.2 lb each.
+        unit_weight = float(d.get("weight") or 0) / (d.get("bundleSize") or 1)
+
         out.append(Item(
             name=custom_name or base_name,
             quantity=item.get("quantity") or 1,
             equipped=bool(item.get("equipped")),
             attuned=bool(item.get("isAttuned")),
-            weight=float(d.get("weight") or 0),
+            weight=unit_weight,
             kind=d.get("filterType") or d.get("type"),
             rarity=d.get("rarity"),
             magic=bool(d.get("magic")),

@@ -25,6 +25,7 @@ The sheet is meant to be printed in greyscale for in-person play:
 
 from __future__ import annotations
 
+import dataclasses
 import html
 import re
 from typing import List, Optional, Tuple
@@ -1004,7 +1005,48 @@ def _measure_height(build_fn, c: Character) -> float:
     return scratch.y - MARGIN
 
 
-_MAX_ITEM_CHECKS = 24  # cap for stacks like arrows so a row can't run away
+_MAX_ITEM_CHECKS = 24  # a group at or above this size gets split, below never does
+
+
+def _combine_identical_items(items: List) -> List:
+    """Merge entries that are identical in every displayed respect except
+    quantity (D&D Beyond sometimes tracks several copies of the same item
+    as separate inventory entries) into one, combined count, keeping each
+    distinct item's first-seen position."""
+    merged: dict = {}
+    order: List = []
+    for item in items:
+        key = (item.name, item.equipped, item.attuned, item.weight, item.kind, item.rarity,
+               item.magic, item.cost, item.base_name, item.requires_attunement,
+               item.description, item.max_charges)
+        if key in merged:
+            prior = merged[key]
+            merged[key] = dataclasses.replace(prior, quantity=prior.quantity + item.quantity)
+        else:
+            merged[key] = item
+            order.append(key)
+    return [merged[k] for k in order]
+
+
+def _split_large_groups(items: List) -> List:
+    """Any group larger than _MAX_ITEM_CHECKS (24) gets split into the
+    fewest possible sub-groups of at most 24, so every group's checkboxes
+    fit on their own without an overflow note. The split is as even as
+    possible rather than greedy-then-remainder, so the last group is
+    never a lone leftover too small to bother checking off (e.g. a stack
+    of 25 must not become a group of 24 plus a group of 1)."""
+    out = []
+    for item in items:
+        q = item.quantity
+        if q <= _MAX_ITEM_CHECKS:
+            out.append(item)
+            continue
+        n = -(-q // _MAX_ITEM_CHECKS)  # ceil(q / _MAX_ITEM_CHECKS)
+        base, extra = divmod(q, n)
+        for i in range(n):
+            chunk = base + (1 if i < extra else 0)
+            out.append(dataclasses.replace(item, quantity=chunk))
+    return out
 
 
 def _build_inventory(b: SheetBuilder, c: Character) -> None:
@@ -1041,7 +1083,7 @@ def _build_inventory(b: SheetBuilder, c: Character) -> None:
         rows = max(1, -(-n // per_row))
         return 11 + rows * (cbox + cgap) + 4
 
-    items = c.inventory
+    items = _split_large_groups(_combine_identical_items(c.inventory))
     half = -(-len(items) // 2)
     columns = [items[:half], items[half:]]
     col_x = [MARGIN, MARGIN + col_w + col_gap]
@@ -1076,6 +1118,14 @@ def _build_inventory(b: SheetBuilder, c: Character) -> None:
                         y += cbox + cgap
                     b.cv.rect(cx, y, cbox, cbox)
                     cx += cbox + cgap
+                    # A small tick between every 5 checkboxes so a long row
+                    # is easy to count at a glance, skipped right before a
+                    # row wrap or the group's last box (nothing to separate).
+                    ends_group = k + 1 == n
+                    ends_row = (k + 1) % per_row == 0
+                    if (k + 1) % 5 == 0 and not ends_group and not ends_row:
+                        b.cv.vline(cx, y - 2, y + cbox + 2, gray=0.4)
+                        cx+=cgap
                 if item.quantity > _MAX_ITEM_CHECKS:
                     b.cv.text(cx + 3, y + cbox - 1, f"+{item.quantity - _MAX_ITEM_CHECKS} more",
                                font="F1", size=6, gray=0.4)
