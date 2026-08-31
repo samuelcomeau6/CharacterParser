@@ -1109,7 +1109,7 @@ def _parse_spells(data: dict) -> List[Spell]:
     def add(entry: dict, source: str):
         d = entry.get("definition") or {}
         name = d.get("name")
-        if not name:
+        if not name or in_filter_list(name):
             return
         key = (name, source)
         if key in seen:
@@ -1818,6 +1818,172 @@ def _sync_filters_to_library_module() -> None:
         setattr(lib, name, globals()[name])
 
 
+# --------------------------------------------------------------------------
+# Filter files: a JSON file holding all three filter categories' names and
+# patterns at once, for --filter-file to load wholesale (see load_filter_file)
+# and --build-filter-file to write out interactively (see
+# build_filter_file_interactive). Format:
+#
+#   {
+#     "filter_list":        {"names": [...], "patterns": [...]},
+#     "filter_summary":     {"names": [...], "patterns": [...]},
+#     "filter_description": {"names": [...], "patterns": [...]}
+#   }
+#
+# Each "patterns" entry is a plain regex string (compiled case-insensitively,
+# like --filter-*-pattern). A category missing from the file is simply
+# empty -- there's no "add to the defaults" variant for a filter file.
+# --------------------------------------------------------------------------
+
+_FILTER_FILE_KEYS = ("filter_list", "filter_summary", "filter_description")
+
+
+def _filter_category_from_json(entry: dict, label: str) -> Tuple[set, List[re.Pattern]]:
+    names = {str(n) for n in (entry.get("names") or [])}
+    patterns = []
+    for p in entry.get("patterns") or []:
+        try:
+            patterns.append(re.compile(p, re.IGNORECASE))
+        except re.error as exc:
+            raise ValueError(f"invalid regular expression {p!r} in {label}.patterns: {exc}")
+    return names, patterns
+
+
+def load_filter_file(path: str) -> None:
+    """Replace FILTER_LIST/FILTER_SUMMARY/FILTER_DESCRIPTION (and their
+    patterns) wholesale from a JSON filter file. Unlike the --filter-*
+    options, there's no "add" variant here: any of the three categories
+    missing from the file is simply empty, not merged with the built-in
+    defaults -- the file is a complete replacement."""
+    global FILTER_LIST, FILTER_SUMMARY, FILTER_DESCRIPTION
+    global FILTER_LIST_PATTERNS, FILTER_SUMMARY_PATTERNS, FILTER_DESCRIPTION_PATTERNS
+
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        raise ValueError("filter file must contain a JSON object")
+
+    FILTER_LIST, FILTER_LIST_PATTERNS = _filter_category_from_json(
+        data.get("filter_list") or {}, "filter_list")
+    FILTER_SUMMARY, FILTER_SUMMARY_PATTERNS = _filter_category_from_json(
+        data.get("filter_summary") or {}, "filter_summary")
+    FILTER_DESCRIPTION, FILTER_DESCRIPTION_PATTERNS = _filter_category_from_json(
+        data.get("filter_description") or {}, "filter_description")
+
+    _sync_filters_to_library_module()
+
+
+_FILTER_ARG_DESTS = (
+    "filter_list", "filter_list_add", "filter_summary", "filter_summary_add",
+    "filter_description", "filter_description_add",
+    "filter_list_pattern", "filter_list_pattern_add",
+    "filter_summary_pattern", "filter_summary_pattern_add",
+    "filter_description_pattern", "filter_description_pattern_add",
+)
+
+
+def _given_filter_flags(args: argparse.Namespace) -> List[str]:
+    return [f"--{dest.replace('_', '-')}" for dest in _FILTER_ARG_DESTS
+            if getattr(args, dest) is not None]
+
+
+def _check_filter_arg_conflicts(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    given = _given_filter_flags(args)
+    if args.filter_file is not None and given:
+        ap.error("--filter-file cannot be combined with " + ", ".join(given))
+    if args.build_filter_file:
+        conflicting = given + (["--filter-file"] if args.filter_file is not None else [])
+        if conflicting:
+            ap.error("--build-filter-file cannot be combined with " + ", ".join(conflicting))
+
+
+_FILTER_MENU = (
+    "  [1] No filter (default)\n"
+    "  [2] Exclude from all\n"
+    "  [3] Exclude from summary\n"
+    "  [4] Exclude from description"
+)
+_FILTER_MENU_CHOICES = {"": None, "1": None, "2": "list", "3": "summary", "4": "description"}
+
+
+def _prompt_filter_choice(label: str, name: str, description: Optional[str]) -> Optional[str]:
+    from character_sheet_pdf import html_to_text  # lazy: avoid a hard/circular import at load time
+    text = html_to_text(description) if description else "(no description)"
+
+    print("=" * 70)
+    print(f"{label}: {name}")
+    print("-" * 70)
+    print(text)
+    print("-" * 70)
+    print(_FILTER_MENU)
+    while True:
+        choice = input("Choice [1-4]: ").strip()
+        if choice in _FILTER_MENU_CHOICES:
+            return _FILTER_MENU_CHOICES[choice]
+        print("Please enter 1, 2, 3, or 4.")
+
+
+def build_filter_file_interactive(c: Character) -> None:
+    """Interactively ask, for every feat/class feature/species trait/spell
+    on `c` (deduplicated by name), which one of the three filter
+    categories it belongs in -- or none, the default -- then write the
+    result out as a filter file for --filter-file to load later."""
+    entities: List[Tuple[str, str, Optional[str]]] = []
+    seen = set()
+
+    def add_all(label: str, items) -> None:
+        for item in items:
+            key = item.name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            entities.append((label, item.name, item.description))
+
+    add_all("Feat", c.feats)
+    add_all("Class Feature", c.class_features)
+    add_all("Species Trait", c.species_traits)
+    add_all("Spell", c.spells)
+
+    if not entities:
+        print("Nothing to filter -- this character has no feats, traits, or spells.")
+        return
+
+    print(f"Building a filter file from {len(entities)} feats/traits/spells for {c.name}.")
+    print("Press Enter to accept the default (no filter) for most entries.\n")
+
+    filter_list: set = set()
+    filter_summary: set = set()
+    filter_description: set = set()
+    for label, name, description in entities:
+        choice = _prompt_filter_choice(label, name, description)
+        if choice == "list":
+            filter_list.add(name)
+        elif choice == "summary":
+            filter_summary.add(name)
+        elif choice == "description":
+            filter_description.add(name)
+
+    payload = {
+        "filter_list": {"names": sorted(filter_list), "patterns": []},
+        "filter_summary": {"names": sorted(filter_summary), "patterns": []},
+        "filter_description": {"names": sorted(filter_description), "patterns": []},
+    }
+
+    while True:
+        dest = input("\nSave filter file to: ").strip()
+        if not dest:
+            print("Please enter a file path.")
+            continue
+        try:
+            with open(dest, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2)
+        except OSError as exc:
+            print(f"Could not save to {dest!r}: {exc}")
+            continue
+        print(f"Filter file written to {dest}")
+        return
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         description="Download and parse a D&D Beyond character sheet.",
@@ -1844,8 +2010,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     _add_pattern_option(ap, "filter-summary", "FILTER_SUMMARY (dropped from the summary only)")
     _add_pattern_option(ap, "filter-description",
                          "FILTER_DESCRIPTION (shown without a description)")
+    ap.add_argument("--filter-file", metavar="PATH",
+                     help="load FILTER_LIST/FILTER_SUMMARY/FILTER_DESCRIPTION (and their "
+                          "patterns) wholesale from a JSON filter file, replacing the "
+                          "built-in defaults entirely -- cannot be combined with any other "
+                          "--filter-* option")
+    ap.add_argument("--build-filter-file", action="store_true",
+                     help="interactively build a filter file for this character (prompting "
+                          "to exclude each feat/class feature/species trait/spell from all, "
+                          "the summary, or the description) instead of rendering it")
     args = ap.parse_args(argv)
-    _apply_filter_args(args)
+    _check_filter_arg_conflicts(ap, args)
+
+    if args.filter_file is not None:
+        try:
+            load_filter_file(args.filter_file)
+        except (OSError, ValueError) as exc:
+            print(f"error: could not load filter file {args.filter_file!r}: {exc}", file=sys.stderr)
+            return 1
+    else:
+        _apply_filter_args(args)
 
     try:
         if os.path.exists(args.character):
@@ -1864,6 +2048,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     except urllib.error.URLError as exc:
         print(f"network error: {exc}", file=sys.stderr)
         return 1
+
+    if args.build_filter_file:
+        build_filter_file_interactive(char)
+        return 0
 
     if args.pdf:
         from character_sheet_pdf import render_pdf

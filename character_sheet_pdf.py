@@ -980,7 +980,8 @@ def _build_attacks(b: SheetBuilder, c: Character) -> None:
     # Every known cantrip counts as an at-will "attack" at the table, so it
     # gets a row too — with the caster's spell attack bonus and save DC,
     # since a cantrip might use either.
-    cantrips = sorted((s for s in c.spells if s.level == 0), key=lambda s: s.name)
+    cantrips = sorted((s for s in c.spells if s.level == 0 and not in_filter_summary(s.name)),
+                       key=lambda s: s.name)
     if cantrips:
         caster = next((cl for cl in c.classes if cl.spellcasting_ability), None)
         atk_bonus_text, dc = "—", None
@@ -1588,7 +1589,9 @@ def _build_spells(b: SheetBuilder, c: Character) -> None:
             if meta:
                 b.paragraph(meta, size=7, gray=0.4, leading=9.5)
 
-            if s.description:
+            if in_filter_description(s.name):
+                pass  # FILTER_DESCRIPTION: name only, description withheld
+            elif s.description:
                 b.rich_text(s.description, size=8, gray=0.0, leading=10)
             else:
                 b.line("(see rulebook — no description in source data)", size=7.5, gray=0.45,
