@@ -300,6 +300,7 @@ class Ability:
     save: int
     save_proficient: bool
     save_advantage: bool = False
+    save_disadvantage: bool = False
 
 
 @dataclass
@@ -624,7 +625,8 @@ def _parse_abilities(data: dict, mods, prof: int) -> Dict[str, Ability]:
         save = mod + (prof if save_prof else 0)
         save += _sum_bonus(mods, f"{name}-saving-throws", "saving-throws")
         save_adv = _has(mods, "advantage", f"{name}-saving-throws")
-        abilities[name] = Ability(name, score, mod, save, save_prof, save_adv)
+        save_disadv = _has(mods, "disadvantage", f"{name}-saving-throws")
+        abilities[name] = Ability(name, score, mod, save, save_prof, save_adv, save_disadv)
     return abilities
 
 
